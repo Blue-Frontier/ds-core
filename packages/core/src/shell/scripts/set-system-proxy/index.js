@@ -280,6 +280,38 @@ async function getMacNetworkService (exec) {
 // macOS exit code 14 = "You don't have permission to change the system preferences."
 const MACOS_NETWORKSETUP_PERMISSION_ERROR_CODE = 14
 
+/**
+ * POSIX single-quote escaping: wraps `arg` in single quotes, escaping any
+ * embedded single quotes with the '\''-idiom.  This prevents shell
+ * metacharacter expansion regardless of the character set of the value.
+ * @param {string|number} arg
+ * @returns {string}
+ */
+function shellEscapeArg (arg) {
+  return "'" + String(arg).replace(/'/g, "'\\''") + "'"
+}
+
+/**
+ * Strict-validate a proxy host (IPv4 / IPv6 / hostname) and throw if the
+ * value looks suspicious.  This is a defence-in-depth guard for the sudo
+ * execution path; the primary protection is `shellEscapeArg`.
+ */
+function validateProxyIp (ip) {
+  if (typeof ip !== 'string' || !/^[\w.\-:[\]]+$/.test(ip)) {
+    throw new Error(`无效的代理 IP 地址: ${ip}`)
+  }
+}
+
+/**
+ * Strict-validate a TCP port number.
+ */
+function validateProxyPort (port) {
+  const n = Number(port)
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(`无效的代理端口号: ${port}`)
+  }
+}
+
 function sudoExecMac (cmd) {
   return new Promise((resolve, reject) => {
     log.info('以管理员权限执行命令:', cmd)
