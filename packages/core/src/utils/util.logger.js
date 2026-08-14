@@ -7,6 +7,9 @@ const configFromFiles = defaultConfig.configFromFiles
 // 日志级别
 const level = process.env.NODE_ENV === 'development' ? 'debug' : 'info'
 
+// 是否同时输出到 stdout。默认开启（GUI/开发调试需要），CLI 守护进程通过环境变量关闭
+const logToConsole = process.env.DEV_SIDECAR_LOG_TO_CONSOLE !== 'false'
+
 function getDefaultConfigBasePath () {
   if (configFromFiles.app.logFileSavePath) {
     let logFileSavePath = configFromFiles.app.logFileSavePath
@@ -43,17 +46,16 @@ function log4jsConfigure (categories) {
   }
 
   const config = {
-    appenders: {
-      std: { type: 'stdout' },
-    },
+    appenders: logToConsole ? { std: { type: 'stdout' } } : {},
     categories: {
-      default: { appenders: ['std'], level },
+      // default 分类至少需要挂一个 appender（log4js 校验要求），没有 std 时复用第一个文件 appender
+      default: { appenders: logToConsole ? ['std'] : [categories[0]], level },
     },
   }
 
   for (const category of categories) {
     config.appenders[category] = { ...appenderConfig, filename: path.join(basePath, `/${category}.log`) }
-    config.categories[category] = { appenders: [category, 'std'], level }
+    config.categories[category] = { appenders: logToConsole ? [category, 'std'] : [category], level }
   }
 
   log4js.configure(config)
