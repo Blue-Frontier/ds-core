@@ -12,6 +12,9 @@
   "scripts": {
     "test": "mocha --exit"
   },
+  "devDependencies": {
+    "mocha": "^11.8.0"
+  },
   "dependencies": {
     "@docmirror/dev-sidecar": "workspace:*",
     "agentkeepalive": "^4.6.0",
