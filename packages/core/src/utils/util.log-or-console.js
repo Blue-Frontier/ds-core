@@ -1,6 +1,12 @@
 const dateUtil = require('./util.date')
 
-let log = console
+// CLI 命令（如 status）会 require core 但不会启动，若默认输出到 console 会污染命令结果。
+// 当 DEV_SIDECAR_LOG_TO_CONSOLE=false 时保持静默，但仍备份，待 setLogger 后回放进日志文件
+const silent = process.env.DEV_SIDECAR_LOG_TO_CONSOLE === 'false'
+
+let log = silent
+  ? { debug () {}, info () {}, warn () {}, error () {} }
+  : console
 
 // 将console中的日志缓存起来，当setLogger时，将控制台的日志写入日志文件
 let backupLogs = []
@@ -42,9 +48,12 @@ function printBackups () {
 }
 
 function _doLog (fun, args) {
-  if (log === console) {
-    log[fun](...[`[${fun.toUpperCase()}]`, ...args])
-    backup(fun, args) // 控制台日志备份起来
+  if (log === console || silent) {
+    // console 模式：带前缀输出并备份；静默模式：只备份不输出，setLogger 后回放
+    if (log === console) {
+      log[fun](...[`[${fun.toUpperCase()}]`, ...args])
+    }
+    backup(fun, args)
   } else {
     log[fun](...args)
   }

@@ -31,6 +31,23 @@ const proxy = setupPlugin('proxy', modules.proxy, context, config)
 const plugin = {}
 for (const key in modules.plugin) {
   const target = modules.plugin[key]
+  if (target == null) {
+    // 插件不可用（如 SEA 独立可执行文件中无法携带 free-eye），注册为禁用状态
+    log.warn(`插件【${key}】不可用，已注册为禁用状态`)
+    const stub = {
+      config: { key, enabled: false },
+      status: { enabled: false },
+      plugin: () => ({
+        start: async () => log.warn(`插件【${key}】不可用，无法启动`),
+        stop: async () => {},
+        close: async () => {},
+        run: async () => { throw new Error(`插件【${key}】不可用`) },
+      }),
+    }
+    const stubApi = setupPlugin(`plugin.${key}`, stub, context, config)
+    plugin[key] = stubApi
+    continue
+  }
   const api = setupPlugin(`plugin.${key}`, target, context, config)
   plugin[key] = api
 }
