@@ -1,5 +1,6 @@
 const http = require('node:http')
 const https = require('node:https')
+const net = require('node:net')
 const jsonApi = require('../../../json')
 const log = require('../../../utils/util.log.server')
 const RequestCounter = require('../../choice/RequestCounter')
@@ -115,7 +116,11 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           log.info('发起代理请求:', url, (rOptions.servername ? `, sni: ${rOptions.servername}` : ''), ', headers:', jsonApi.stringify2(rOptions.headers))
 
           const isDnsIntercept = {}
-          if (dnsConfig && dnsConfig.dnsMap) {
+          let dnsHeaderLabel = null
+          if (rOptions.hostname && net.isIP(rOptions.hostname)) {
+            // 请求地址本身就是 IP 时，不会触发 DNS lookup，直接写入响应头
+            res.setHeader('DS-DNS', `host: ${rOptions.hostname}`)
+          } else if (dnsConfig && dnsConfig.dnsMap) {
             let dnsAndFamily = DnsUtil.getDNSAndFamily(dnsConfig, rOptions.hostname)
             if (!dnsAndFamily && rOptions.servername) {
               const dns = dnsConfig.dnsMap.ForSNI
@@ -132,12 +137,20 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
                 rOptions.family = 6
               }
               log.debug(`域名 ${rOptions.hostname} DNS: ${dnsAndFamily.dns.dnsName}, family: ${rOptions.family || 4}`)
-              res.setHeader('DS-DNS', dnsAndFamily.dns.dnsName === '预设IP' ? 'PreSet' : dnsAndFamily.dns.dnsName.replace(/[^\x20-\x7E]/g, ''))
+              dnsHeaderLabel = dnsAndFamily.dns.dnsName === '预设IP' ? 'PreSet' : dnsAndFamily.dns.dnsName.replace(/[^\x20-\x7E]/g, '')
+              res.setHeader('DS-DNS', dnsHeaderLabel)
             } else {
-              log.info(`域名 ${rOptions.hostname} 在DNS中未配置`)
+              // 未配置自定义 DNS，使用系统默认 DNS，并捕获 IP 写入响应头
+              rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url)
+              dnsHeaderLabel = 'default'
+              res.setHeader('DS-DNS', dnsHeaderLabel)
+              log.info(`域名 ${rOptions.hostname} 在DNS中未配置，使用系统默认DNS`)
             }
           } else {
-            log.info(`域名 ${rOptions.hostname} DNS配置不存在`)
+            rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url)
+            dnsHeaderLabel = 'default'
+            res.setHeader('DS-DNS', dnsHeaderLabel)
+            log.info(`域名 ${rOptions.hostname} DNS配置不存在，使用系统默认DNS`)
           }
 
           // rOptions.sigalgs = 'RSA-PSS+SHA256:RSA-PSS+SHA512:ECDSA+SHA256'
@@ -147,7 +160,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           // log.debug('rOptions:', rOptions.hostname + rOptions.path, '\r\n', rOptions)
           // log.debug('agent:', rOptions.agent)
           // log.debug('agent.options:', rOptions.agent.options)
-          res.setHeader('DS-Proxy-Request', `${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${req.url}`)
+          res.setHeader('DS-Proxy-Request', `${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path || req.url}`)
 
           // 自动兼容程序：2
           if (rOptions.agent) {
@@ -196,9 +209,26 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             proxyReq.destroy(new Error(errorMsg))
           }, 7000)
           proxyReq.once('socket', (socket) => {
+            const updateDsDnsFromSocket = () => {
+              if (res && !res.headersSent && dnsHeaderLabel && socket.remoteAddress) {
+                let family = socket.remoteFamily
+                if (family === 'IPv4') {
+                  family = 4
+                } else if (family === 'IPv6') {
+                  family = 6
+                } else {
+                  family = net.isIP(socket.remoteAddress) === 6 ? 6 : 4
+                }
+                res.setHeader('DS-DNS', `${dnsHeaderLabel}: ${socket.remoteAddress} (IPv${family})`)
+              }
+            }
+            // keep-alive 复用 socket 时不会触发 lookup/connect，remoteAddress 已存在；
+            // 新 socket 则等 connect 事件后再写入。
+            updateDsDnsFromSocket()
             socket.once('connect', () => {
               clearTimeout(connectionTimer)
               connectionTimer = null
+              updateDsDnsFromSocket()
             })
           })
 

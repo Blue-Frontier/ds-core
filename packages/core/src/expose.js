@@ -55,80 +55,96 @@ config.resetDefault()
 const server = modules.server
 const serverStart = server.start
 
-function newServerStart ({ mitmproxyPath }) {
-  return serverStart({ mitmproxyPath, plugins: plugin })
+function newServerStart ({ mitmproxyPath, setting }) {
+  return serverStart({ mitmproxyPath, plugins: plugin, setting })
 }
 server.start = newServerStart
-async function startup ({ mitmproxyPath }) {
+async function startup ({ mitmproxyPath, setting }) {
   const conf = config.get()
+  const tasks = []
+
   if (conf.server.enabled && !status.server.enabled) {
-    try {
-      await server.start({ mitmproxyPath })
-    } catch (err) {
-      log.error('代理服务启动失败：', err)
-    }
+    tasks.push((async () => {
+      try {
+        await server.start({ mitmproxyPath })
+      } catch (err) {
+        log.error('代理服务启动失败：', err)
+      }
+    })())
   }
   if (conf.proxy.enabled && !status.proxy.enabled) {
-    try {
-      await proxy.start()
-    } catch (err) {
-      log.error('开启系统代理失败：', err)
-    }
+    tasks.push((async () => {
+      try {
+        await proxy.start()
+      } catch (err) {
+        log.error('开启系统代理失败：', err)
+      }
+    })())
   }
+
   try {
-    const plugins = []
     for (const key in plugin) {
       if (conf.plugin[key].enabled && !status.plugin[key]?.enabled) {
-        const start = async () => {
+        if (key === 'overwall' && setting && setting.overwall !== true) {
+          log.info(`插件【${key}】未启动：setting.json 未开启 overwall`)
+          continue
+        }
+        tasks.push((async () => {
           try {
             await plugin[key].start()
             log.info(`插件【${key}】已启动`)
           } catch (err) {
             log.error(`插件【${key}】启动失败:`, err)
           }
-        }
-        plugins.push(start())
+        })())
       }
-    }
-    if (plugins && plugins.length > 0) {
-      await Promise.all(plugins)
     }
   } catch (err) {
     log.error('开启插件失败：', err)
   }
+
+  if (tasks.length > 0) {
+    // server、系统代理、各插件之间没有相互依赖，并行启动以缩短整体等待时间
+    await Promise.all(tasks)
+  }
 }
 
 async function shutdown () {
+  const tasks = []
+
   try {
-    const plugins = []
     for (const key in plugin) {
       if (status.plugin[key] && status.plugin[key].enabled && plugin[key].close) {
-        const close = async () => {
+        tasks.push((async () => {
           try {
             await plugin[key].close()
             log.info(`插件【${key}】已关闭`)
           } catch (err) {
             log.error(`插件【${key}】关闭失败:`, err)
           }
-        }
-        plugins.push(close())
+        })())
       }
-    }
-    if (plugins.length > 0) {
-      await Promise.all(plugins)
     }
   } catch (error) {
     log.error('插件关闭失败:', error)
   }
 
   if (status.proxy.enabled) {
-    try {
-      await proxy.close()
-      log.info('系统代理已关闭')
-    } catch (err) {
-      log.error('系统代理关闭失败:', err)
-    }
+    tasks.push((async () => {
+      try {
+        await proxy.close()
+        log.info('系统代理已关闭')
+      } catch (err) {
+        log.error('系统代理关闭失败:', err)
+      }
+    })())
   }
+
+  if (tasks.length > 0) {
+    // 插件关闭（清理 git/npm 配置）与关闭系统代理互不依赖，并行执行
+    await Promise.all(tasks)
+  }
+
   if (status.server.enabled) {
     try {
       await server.close()

@@ -2,6 +2,9 @@ const defaultDns = require('node:dns')
 const net = require('node:net')
 const log = require('../../../utils/util.log.server')
 const speedTest = require('../../speed')
+const cloudflareRoute = require('../../cloudflareRoute')
+const trafficMonitor = require('../../traffic/TrafficMonitor')
+const { isZeroIp } = require('../../dns/util.ip')
 
 // HTTP/2 头值只允许 ASCII 可见字符，需过滤中文等非 ASCII 字符
 function safeHeaderValue (value) {
@@ -14,6 +17,32 @@ function isValidIpAddress (ip) {
 
 function getAddressFamily (ip) {
   return net.isIP(ip) === 6 ? 6 : 4
+}
+
+// DNS 返回的全部地址都是零 IP（0.0.0.0 / ::）时，判定为 Adblock 拦截，通知流量统计忽略该域名
+function markBlockedIfAllZero (hostname, address) {
+  const list = Array.isArray(address) ? address : [address]
+  if (list.length === 0) {
+    return
+  }
+  const allZero = list.every((item) => {
+    const ip = item && item.address ? item.address : item
+    return isZeroIp(ip)
+  })
+  if (allZero) {
+    trafficMonitor.markBlocked(hostname)
+  }
+}
+
+function rewriteCloudflareIp (hostname, ip) {
+  if (!isValidIpAddress(ip)) {
+    return ip
+  }
+  const rewritten = cloudflareRoute.rewriteIp(ip)
+  if (rewritten !== ip) {
+    log.info(`[cloudflare-route] 命中 Cloudflare IP 段，重写: ${hostname}: ${ip} -> ${rewritten}`)
+  }
+  return rewritten
 }
 
 function respondLookup (callback, ip, family, all) {
@@ -57,15 +86,38 @@ module.exports = {
 
     return (hostname, options, callback) => {
       const all = options && options.all === true
+      const defaultLookup = (options, callback) => {
+        defaultDns.lookup(hostname, options, (err, address, family) => {
+          if (!err) {
+            markBlockedIfAllZero(hostname, address)
+            if (Array.isArray(address)) {
+              address = address.map((item) => {
+                const newIp = rewriteCloudflareIp(hostname, item.address)
+                return { address: newIp, family: getAddressFamily(newIp) }
+              })
+            } else {
+              address = rewriteCloudflareIp(hostname, address)
+              family = getAddressFamily(address)
+            }
+            if (res) {
+              const first = Array.isArray(address) ? address[0] : { address, family }
+              if (first && isValidIpAddress(first.address)) {
+                res.setHeader('DS-DNS', `default: ${first.address} (IPv${first.family})`)
+              }
+            }
+          }
+          callback(err, address, family)
+        })
+      }
       const tester = speedTest.getSpeedTester(hostname, port)
       if (tester) {
         const aliveIpObj = tester.pickFastAliveIpObj()
-        if (aliveIpObj && isValidIpAddress(aliveIpObj.host)) {
+        if (aliveIpObj && isValidIpAddress(aliveIpObj.host) && !isZeroIp(aliveIpObj.host)) {
           const addressFamily = getAddressFamily(aliveIpObj.host)
           log.info(`----- ${action}: ${hostname}, use alive ip from dns '${aliveIpObj.dns}': ${aliveIpObj.host}${target} -----`)
           if (res) {
             const dnsLabel = aliveIpObj.dns === '预设IP' ? 'PreSet' : safeHeaderValue(aliveIpObj.dns)
-            res.setHeader('DS-DNS-Lookup', `IpTester: ${aliveIpObj.host} ${dnsLabel}`)
+            res.setHeader('DS-DNS', `${dnsLabel}: ${aliveIpObj.host} (IPv${addressFamily})`)
           }
           respondLookup(callback, aliveIpObj.host, addressFamily, all)
           return
@@ -79,10 +131,14 @@ module.exports = {
       // 无已测速的存活 IP，轮转分配未失败 IP 逐个探测，并发请求自动分散
       if (tester && tester.backupList.length > 0) {
         const probe = tester.pickNextForProbing()
-        if (probe && isValidIpAddress(probe.host)) {
+        if (probe && isValidIpAddress(probe.host) && !isZeroIp(probe.host)) {
           const addressFamily = getAddressFamily(probe.host)
           log.info(`----- ${action}: ${hostname}, use probing ip: ${probe.host} (family: ${addressFamily})${target} -----`)
           if (isDnsIntercept) { isDnsIntercept.tester = tester }
+          if (res) {
+            const dnsLabel = probe.dns === '预设IP' ? 'PreSet' : safeHeaderValue(probe.dns)
+            res.setHeader('DS-DNS', `${dnsLabel}: ${probe.host} (IPv${addressFamily})`)
+          }
           respondLookup(callback, probe.host, addressFamily, all)
           return
         }
@@ -90,6 +146,8 @@ module.exports = {
 
       dns.lookup(hostname, { ipChecker, family }).then((ip) => {
         if (ip !== hostname && isValidIpAddress(ip)) {
+          markBlockedIfAllZero(hostname, ip)
+          ip = rewriteCloudflareIp(hostname, ip)
           const addressFamily = getAddressFamily(ip)
           if (isDnsIntercept) {
             isDnsIntercept.dns = dns
@@ -100,7 +158,7 @@ module.exports = {
           log.info(`----- ${action}: ${hostname}, use ip from dns '${dns.dnsName}': ${ip}(family: ${addressFamily})${target} -----`)
           if (res) {
             const dnsLabel = dns.dnsName === '预设IP' ? 'PreSet' : safeHeaderValue(dns.dnsName)
-            res.setHeader('DS-DNS-Lookup', `DNS: ${ip} (IPv${addressFamily}) ${dnsLabel}`)
+            res.setHeader('DS-DNS', `${dnsLabel}: ${ip} (IPv${addressFamily})`)
           }
           respondLookup(callback, ip, addressFamily, all)
         } else {
@@ -109,11 +167,45 @@ module.exports = {
             log.warn(`----- ${action}: ${hostname}, dns returned invalid ip '${ip}'${target}, fallback to default DNS`)
           }
           log.info(`----- ${action}: ${hostname}, use default DNS: ${hostname}${target}, options:`, options, ', dns:', dns)
-          defaultDns.lookup(hostname, options, callback)
+          defaultLookup(options, callback)
         }
       }).catch((err) => {
         log.error(`----- ${action}: ${hostname}, dns lookup error${target}, options:`, options, `, error:`, err)
-        defaultDns.lookup(hostname, options, callback)
+        defaultLookup(options, callback)
+      })
+    }
+  },
+
+  // 未配置自定义 DNS 时，使用系统默认 DNS 解析，并捕获 IP 写入响应头
+  createDefaultLookupFunc (res, action, target) {
+    target = target ? `, target: ${target}` : ''
+
+    return (hostname, options, callback) => {
+      defaultDns.lookup(hostname, options, (err, address, family) => {
+        if (!err) {
+          markBlockedIfAllZero(hostname, address)
+          if (Array.isArray(address)) {
+            address = address.map((item) => {
+              const newIp = rewriteCloudflareIp(hostname, item.address)
+              return { address: newIp, family: getAddressFamily(newIp) }
+            })
+          } else {
+            address = rewriteCloudflareIp(hostname, address)
+            family = getAddressFamily(address)
+          }
+          const first = Array.isArray(address) ? address[0] : { address, family }
+          const ip = first && first.address
+          const fam = first && first.family
+          if (ip && isValidIpAddress(ip)) {
+            log.info(`----- ${action}: ${hostname}, use default DNS: ${ip}(family: ${fam})${target} -----`)
+            if (res) {
+              res.setHeader('DS-DNS', `default: ${ip} (IPv${fam})`)
+            }
+          }
+        } else {
+          log.error(`----- ${action}: ${hostname}, default dns lookup error${target}, error:`, err)
+        }
+        callback(err, address, family)
       })
     }
   },
