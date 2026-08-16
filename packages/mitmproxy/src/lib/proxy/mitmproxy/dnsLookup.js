@@ -34,11 +34,15 @@ function markBlockedIfAllZero (hostname, address) {
   }
 }
 
-function rewriteCloudflareIp (hostname, ip) {
+function rewriteCloudflareIp (hostname, ip, isPreSet) {
   if (!isValidIpAddress(ip)) {
     return ip
   }
-  const rewritten = cloudflareRoute.rewriteIp(ip)
+  // 预设 IP 优先级最高，不参与 Cloudflare 路由重定向
+  if (isPreSet) {
+    return ip
+  }
+  const rewritten = cloudflareRoute.rewriteIp(ip, hostname)
   if (rewritten !== ip) {
     log.info(`[cloudflare-route] 命中 Cloudflare IP 段，重写: ${hostname}: ${ip} -> ${rewritten}`)
   }
@@ -63,11 +67,12 @@ function createIpChecker (tester) {
     for (let i = 0; i < tester.backupList.length; i++) {
       const item = tester.backupList[i]
       if (item.host === ip) {
-        if (item.time > 0) {
-          return true // IP测速成功
-        }
+        // 先判断失败标记：失败 IP 在重新测速成功前不再被回退 DNS 选用
         if (item.status === 'failed') {
           return false // IP测速失败
+        }
+        if (item.time > 0) {
+          return true // IP测速成功
         }
         break
       }
@@ -115,6 +120,12 @@ module.exports = {
         if (aliveIpObj && isValidIpAddress(aliveIpObj.host) && !isZeroIp(aliveIpObj.host)) {
           const addressFamily = getAddressFamily(aliveIpObj.host)
           log.info(`----- ${action}: ${hostname}, use alive ip from dns '${aliveIpObj.dns}': ${aliveIpObj.host}${target} -----`)
+          if (isDnsIntercept) {
+            isDnsIntercept.dns = dns
+            isDnsIntercept.hostname = hostname
+            isDnsIntercept.ip = aliveIpObj.host
+            isDnsIntercept.tester = tester
+          }
           if (res) {
             const dnsLabel = aliveIpObj.dns === '预设IP' ? 'PreSet' : safeHeaderValue(aliveIpObj.dns)
             res.setHeader('DS-DNS', `${dnsLabel}: ${aliveIpObj.host} (IPv${addressFamily})`)
@@ -134,7 +145,12 @@ module.exports = {
         if (probe && isValidIpAddress(probe.host) && !isZeroIp(probe.host)) {
           const addressFamily = getAddressFamily(probe.host)
           log.info(`----- ${action}: ${hostname}, use probing ip: ${probe.host} (family: ${addressFamily})${target} -----`)
-          if (isDnsIntercept) { isDnsIntercept.tester = tester }
+          if (isDnsIntercept) {
+            isDnsIntercept.dns = dns
+            isDnsIntercept.hostname = hostname
+            isDnsIntercept.ip = probe.host
+            isDnsIntercept.tester = tester
+          }
           if (res) {
             const dnsLabel = probe.dns === '预设IP' ? 'PreSet' : safeHeaderValue(probe.dns)
             res.setHeader('DS-DNS', `${dnsLabel}: ${probe.host} (IPv${addressFamily})`)
@@ -147,13 +163,15 @@ module.exports = {
       dns.lookup(hostname, { ipChecker, family }).then((ip) => {
         if (ip !== hostname && isValidIpAddress(ip)) {
           markBlockedIfAllZero(hostname, ip)
-          ip = rewriteCloudflareIp(hostname, ip)
+          ip = rewriteCloudflareIp(hostname, ip, dns && dns.dnsName === 'PreSet')
           const addressFamily = getAddressFamily(ip)
           if (isDnsIntercept) {
             isDnsIntercept.dns = dns
             isDnsIntercept.hostname = hostname
             isDnsIntercept.ip = ip
-            if (tester) isDnsIntercept.tester = tester
+            if (tester) {
+              isDnsIntercept.tester = tester
+            }
           }
           log.info(`----- ${action}: ${hostname}, use ip from dns '${dns.dnsName}': ${ip}(family: ${addressFamily})${target} -----`)
           if (res) {

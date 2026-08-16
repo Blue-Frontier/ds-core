@@ -2,6 +2,7 @@ const https = require('node:https')
 const dns = require('node:dns')
 const net = require('node:net')
 const log = require('../utils/util.log.server')
+const matchUtil = require('../utils/util.match')
 
 const CLOUDFLARE_IPS_URL = 'https://api.cloudflare.com/client/v4/ips'
 const REFRESH_IP_RANGES_INTERVAL = 60 * 60 * 1000 // 1 小时
@@ -11,6 +12,8 @@ class CloudflareRoute {
   constructor () {
     this.enabled = false
     this.preferredEndpoint = ''
+    this.mode = 'blacklist' // blacklist（默认）：名单内域名不重定向；whitelist：仅名单内域名重定向
+    this.domains = { origin: {} } // 域名黑白名单（域名匹配串 -> true）
     this.cfBlockList = new net.BlockList()
     this.preferredIpv4 = null
     this.preferredIpv6 = null
@@ -79,6 +82,8 @@ class CloudflareRoute {
 
     this.enabled = conf.enabled === true
     this.preferredEndpoint = conf.preferredEndpoint || ''
+    this.mode = conf.mode === 'whitelist' ? 'whitelist' : 'blacklist'
+    this.domains = matchUtil.domainMapRegexply(conf.domains || {})
     this.preferredReady = false
     this.readyNotified = false
 
@@ -88,9 +93,13 @@ class CloudflareRoute {
       this.refreshPreferredIp()
       this.rangesTimer = setInterval(() => this.refreshIpRanges(), REFRESH_IP_RANGES_INTERVAL)
       this.preferredTimer = setInterval(() => this.refreshPreferredIp(), REFRESH_PREFERRED_IP_INTERVAL)
-      if (this.rangesTimer.unref) this.rangesTimer.unref()
-      if (this.preferredTimer.unref) this.preferredTimer.unref()
-      log.info(`[cloudflare-route] 已启动，优选地址: ${this.preferredEndpoint || '(未填写)'}`)
+      if (this.rangesTimer.unref) {
+        this.rangesTimer.unref()
+      }
+      if (this.preferredTimer.unref) {
+        this.preferredTimer.unref()
+      }
+      log.info(`[cloudflare-route] 已启动，优选地址: ${this.preferredEndpoint || '(未填写)'}，模式: ${this.mode}`)
     } else {
       log.info('[cloudflare-route] 未启用')
     }
@@ -179,14 +188,14 @@ class CloudflareRoute {
 
     return this.resolveEndpoint(endpoint)
       .then((addresses) => {
-        const ipv4 = addresses.find((item) => item.family === 4)
-        const ipv6 = addresses.find((item) => item.family === 6)
+        const ipv4 = addresses.find(item => item.family === 4)
+        const ipv6 = addresses.find(item => item.family === 6)
         this.preferredIpv4 = ipv4 ? ipv4.address : null
         this.preferredIpv6 = ipv6 ? ipv6.address : null
         this.preferredReady = true
         this._notifyReadyIfNeeded()
-        log.info(`[cloudflare-route] 优选地址解析结果: ${endpoint} -> ${addresses.map((item) => item.address).join(', ') || '未解析到'}`)
-        return addresses.map((item) => item.address)
+        log.info(`[cloudflare-route] 优选地址解析结果: ${endpoint} -> ${addresses.map(item => item.address).join(', ') || '未解析到'}`)
+        return addresses.map(item => item.address)
       })
       .catch((e) => {
         log.warn(`[cloudflare-route] 解析优选地址失败: ${endpoint}, error: ${e.message}`)
@@ -211,7 +220,7 @@ class CloudflareRoute {
         if (err) {
           reject(err)
         } else {
-          resolve(addresses.map((item) => ({ address: item.address, family: item.family })))
+          resolve(addresses.map(item => ({ address: item.address, family: item.family })))
         }
       })
     })
@@ -251,6 +260,19 @@ class CloudflareRoute {
     return this.preferredEndpoint ? this.preferredEndpoint.trim() : ''
   }
 
+  // 根据黑白名单模式判断某个域名是否应该重定向 Cloudflare IP
+  shouldRewrite (hostname) {
+    if (!hostname) {
+      return true
+    }
+    const matched = matchUtil.matchHostname(this.domains, hostname, 'cloudflareRoute domains')
+    if (this.mode === 'whitelist') {
+      return !!matched
+    }
+    // blacklist：名单内域名不重定向，其余重定向
+    return !matched
+  }
+
   isCloudflareIp (ip) {
     if (!this.enabled || !this.rangesReady) {
       return false
@@ -267,8 +289,11 @@ class CloudflareRoute {
   }
 
   // 若 IP 属于 Cloudflare 段，则返回优选 IP（保持地址族一致），否则原样返回
-  rewriteIp (ip) {
+  rewriteIp (ip, hostname) {
     if (!this.enabled || !this.rangesReady || !this.isCloudflareIp(ip)) {
+      return ip
+    }
+    if (!this.shouldRewrite(hostname)) {
       return ip
     }
 
@@ -282,14 +307,14 @@ class CloudflareRoute {
     return ip
   }
 
-  rewriteIps (ips) {
+  rewriteIps (ips, hostname) {
     if (!this.enabled || !this.rangesReady) {
       return ips
     }
     const list = Array.isArray(ips) ? ips : [ips]
     const result = []
     for (const ip of list) {
-      const rewritten = this.rewriteIp(ip)
+      const rewritten = this.rewriteIp(ip, hostname)
       if (rewritten && !result.includes(rewritten)) {
         result.push(rewritten)
       }

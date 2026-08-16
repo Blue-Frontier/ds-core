@@ -65,19 +65,30 @@ class SpeedTester {
   // 按需探测结果反馈：记录 IP 成败，供后续请求决策
   reportProbeResult (host, success) {
     const item = this.backupList.find(i => i.host === host)
-    if (!item) return
+    if (!item) {
+      return
+    }
     item._probing = false
     if (success) {
       item.status = 'success'
       item.time = item.time || 1
-      this.alive.push(item)
+      if (!this.alive.some(i => i.host === host)) {
+        this.alive.push(item)
+      }
     } else {
       item.status = 'failed'
+      // 从存活列表中移除失败 IP，避免后续请求和自动重试继续使用这个已失败的 IP
+      this.alive = this.alive.filter(i => i.host !== host)
     }
   }
 
   pickFastAliveIpObj () {
     this.touch()
+
+    // 防御：过滤掉状态已被标记为 failed 的存活 IP
+    if (this.alive.length > 0) {
+      this.alive = this.alive.filter(item => item.status !== 'failed')
+    }
 
     if (this.alive.length === 0) {
       if (this.backupList.length > 0 && this.tryTestCount % 10 > 0) {
@@ -181,12 +192,15 @@ class SpeedTester {
     const items = []
     for (const ip in ips) {
       const item = { host: ip, dns: ips[ip].dns }
-      const rewritten = cloudflareRoute.rewriteIp(ip)
-      if (rewritten !== ip) {
-        // 命中 Cloudflare 路由重定向：测速内容替换为优选 IP 或 CNAME 域名
-        item.host = cloudflareRoute.getPreferredEndpoint() || rewritten
-        item.cf = true
-        item.cfOriginalHost = ip
+      // 预设 IP 优先级最高，不参与 Cloudflare 路由重定向
+      if (item.dns !== '预设IP') {
+        const rewritten = cloudflareRoute.rewriteIp(ip, this.hostname)
+        if (rewritten !== ip) {
+          // 命中 Cloudflare 路由重定向：测速内容替换为优选 IP 或 CNAME 域名
+          item.host = cloudflareRoute.getPreferredEndpoint() || rewritten
+          item.cf = true
+          item.cfOriginalHost = ip
+        }
       }
       items.push(item)
     }
@@ -233,7 +247,7 @@ class SpeedTester {
       const { dnsMap, family } = this.getEffectiveDnsConfig()
       const newList = await this.getIpListFromDns(dnsMap, family)
       // Cloudflare 路由重定向命中后，只测优选 IP/域名，不再保留旧的原始解析 IP
-      if (newList.some((item) => item.cf === true)) {
+      if (newList.some(item => item.cf === true)) {
         this.backupList = _.unionBy(newList, 'host')
       } else {
         const newBackupList = [...newList, ...this.backupList]
