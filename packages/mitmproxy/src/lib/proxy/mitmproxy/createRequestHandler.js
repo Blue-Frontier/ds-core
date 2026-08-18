@@ -317,11 +317,18 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             // keep-alive 复用 socket 时不会触发 lookup/connect，remoteAddress 已存在；
             // 新 socket 则等 connect 事件后再写入。
             updateDsDnsFromSocket()
-            socket.once('connect', () => {
+            if (socket.connecting) {
+              socket.once('connect', () => {
+                clearTimeout(connectionTimer)
+                connectionTimer = null
+                updateDsDnsFromSocket()
+              })
+            } else {
+              // 复用 keep-alive socket 时不会再有 connect 事件，必须立刻清除连接计时器，
+              // 否则 7 秒后计时器会把已经成功的请求误判为连接超时并销毁复用 socket
               clearTimeout(connectionTimer)
               connectionTimer = null
-              updateDsDnsFromSocket()
-            })
+            }
           })
 
           proxyReq.on('timeout', () => {

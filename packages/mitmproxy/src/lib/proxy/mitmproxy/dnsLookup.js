@@ -184,12 +184,17 @@ module.exports = {
           if (ip != null && ip !== hostname && !isValidIpAddress(ip)) {
             log.warn(`----- ${action}: ${hostname}, dns returned invalid ip '${ip}'${target}, fallback to default DNS`)
           }
-          log.info(`----- ${action}: ${hostname}, use default DNS: ${hostname}${target}, options:`, options, ', dns:', dns)
-          defaultLookup(options, callback)
+          // 不继承原 family 选项：强制 IPv6 时若系统 DNS 无 AAAA，会误报 ENOTFOUND，此时应允许系统 DNS 返回 IPv4
+          const defaultOptions = { ...options }
+          delete defaultOptions.family
+          log.info(`----- ${action}: ${hostname}, use default DNS: ${hostname}${target}, options:`, defaultOptions, ', dns:', dns)
+          defaultLookup(defaultOptions, callback)
         }
       }).catch((err) => {
         log.error(`----- ${action}: ${hostname}, dns lookup error${target}, options:`, options, `, error:`, err)
-        defaultLookup(options, callback)
+        const defaultOptions = { ...options }
+        delete defaultOptions.family
+        defaultLookup(defaultOptions, callback)
       })
     }
   },
