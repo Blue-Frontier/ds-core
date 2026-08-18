@@ -225,6 +225,7 @@ module.exports = {
               res.setHeader('DS-DNS', `default: ${ip} (IPv${fam})`)
             }
           }
+          callback(null, ip, family)
         } else {
           log.error(`----- ${action}: ${hostname}, default dns lookup error${target}, error:`, err)
         }
