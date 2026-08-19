@@ -2,6 +2,9 @@ const zlib = require('node:zlib')
 const through = require('through2')
 const log = require('../../../utils/util.log.server')
 
+const HTML_CONTENT_TYPE_RE = /text\/html|application\/xhtml\+xml/
+const CSP_SCRIPT_SRC_RE = /script-src(-elem)?\s+([^;]*)/gi
+
 // 编解码器
 const codecMap = {
   gzip: {
@@ -40,7 +43,7 @@ const httpUtil = {
   // 是否HTML代码
   isHtml (res) {
     const contentType = res.headers['content-type']
-    return (typeof contentType !== 'undefined') && /text\/html|application\/xhtml\+xml/.test(contentType)
+    return (typeof contentType !== 'undefined') && HTML_CONTENT_TYPE_RE.test(contentType)
   },
 }
 const HEAD = Buffer.from('</head>')
@@ -84,26 +87,40 @@ function injectScriptIntoHtml (tags, chunk, script) {
 }
 
 function handleResponseHeaders (res, proxyRes) {
+  // HTTP/2 禁止头，上游服务器可能返回，直传会导致 http2 模块抛异常
+  const HTTP2_FORBIDDEN = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'http2-settings'])
   Object.keys(proxyRes.headers).forEach((key) => {
     if (proxyRes.headers[key] !== undefined) {
-      // let newkey = key.replace(/^[a-z]|-[a-z]/g, (match) => {
-      //   return match.toUpperCase()
-      // })
       const newkey = key
       if (key === 'content-length') {
-        // do nothing
+        // 因为下方会重新编码响应体，故丢弃 content-length
+        return
+      }
+      if (HTTP2_FORBIDDEN.has(key)) {
         return
       }
       if (key === 'content-security-policy') {
         // content-security-policy
         let policy = proxyRes.headers[key]
-        const reg = /script-src ([^:]*);/i
-        const matched = policy.match(reg)
-        if (matched) {
-          if (!matched[1].includes('self')) {
-            policy = policy.replace('script-src', 'script-src \'self\' ')
+
+        // 检查是否已有 script-src 指令
+        const hasScriptSrc = /script-src(-elem)?\s+/i.test(policy)
+
+        // 如果已有 script-src，确保包含 'self'
+        policy = policy.replace(CSP_SCRIPT_SRC_RE, (match, elem, value) => {
+          const directive = `script-src${elem || ''}`
+          const trimmedValue = value.trim()
+          if (trimmedValue.includes("'self'")) {
+            return match
           }
+          return `${directive} 'self' ${trimmedValue}`
+        })
+
+        // 如果原本没有 script-src，显式添加（否则 fallback 到 default-src 'none' 会屏蔽同源脚本）
+        if (!hasScriptSrc) {
+          policy = `script-src 'self'; ${policy}`
         }
+
         res.setHeader(newkey, policy)
         return
       }
@@ -136,6 +153,11 @@ module.exports = {
     // log.info(`urlPath: ${urlPath}, fileName: ${filename}, script: ${script}`)
 
     log.info('ds_script, filename:', filename, ', `script != null` =', script != null)
+    if (script == null) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end(`DevSidecar: script '${filename}' not found`)
+      return true
+    }
     const now = new Date()
     res.writeHead(200, {
       'DS-Middleware': 'ds_script',
@@ -143,7 +165,7 @@ module.exports = {
       'Cache-Control': 'public, max-age=86401, immutable', // 缓存1天
       'Last-Modified': now.toUTCString(),
       'Expires': new Date(now.getTime() + 86400000).toUTCString(), // 缓存1天
-      'Date': new Date().toUTCString(),
+      'Date': now.toUTCString(),
     })
     res.write(script.script)
     res.end()
@@ -157,7 +179,7 @@ module.exports = {
 
     const isHtml = httpUtil.isHtml(proxyRes)
     const contentLengthIsZero = (() => {
-      return proxyRes.headers['content-length'] === 0
+      return proxyRes.headers['content-length'] === '0'
     })()
     if (!isHtml || contentLengthIsZero) {
       next()

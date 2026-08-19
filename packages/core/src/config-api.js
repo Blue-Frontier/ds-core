@@ -60,7 +60,11 @@ const configApi = {
       if (remoteConfigUrl.startsWith('https://raw.githubusercontent.com/')) {
         headers['Server-Name'] = 'baidu.com'
       }
-      request(remoteConfigUrl, { headers }, (error, response, body) => {
+      // 禁用环境变量代理（HTTPS_PROXY/HTTP_PROXY）：
+      // 当用户开启 proxy.setEnv 后，环境变量会指向 dev-sidecar 自己的代理端口，
+      // 启动时本地代理尚未监听，走代理会导致下载失败（ECONNREFUSED 127.0.0.1:31181），
+      // 新装用户会因此无法下载远程配置，只能使用内置规则。
+      request(remoteConfigUrl, { headers, proxy: null }, (error, response, body) => {
         if (error) {
           log.error(`下载远程配置失败: ${remoteConfigUrl}, error:`, error, ', response:', response, ', body:', body)
           reject(error)
@@ -104,7 +108,7 @@ const configApi = {
 
           let message
           if (response) {
-            message = `下载远程配置失败: ${remoteConfigUrl}, message: ${response.message}, code: ${response.statusCode}`
+            message = `下载远程配置失败: ${remoteConfigUrl}, message: ${response.statusMessage}, code: ${response.statusCode}`
           } else {
             message = `下载远程配置失败: response: ${response}`
           }
@@ -280,14 +284,14 @@ const configApi = {
     const noSetList = list.filter((item) => {
       return !item.exists
     })
-    if (list.length > 0) {
+    if (noSetList.length > 0) {
       const context = {
         root_ca_cert_path: configApi.get().server.setting.rootCaFile.certPath,
       }
       for (const item of noSetList) {
         if (item.value.includes('${')) {
           for (const key in context) {
-            item.value = item.value.replcace(new RegExp(`\${${key}}`, 'g'), context[key])
+            item.value = item.value.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), context[key])
           }
         }
       }

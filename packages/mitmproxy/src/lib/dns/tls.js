@@ -1,29 +1,31 @@
-const dnstls = require('dns-over-tls')
+const dnstls = require('./util/dns-over-tls')
 const BaseDNS = require('./base')
 
 const defaultPort = 853
 
 module.exports = class DNSOverTLS extends BaseDNS {
-  constructor (dnsName, cacheSize, preSetIpList, dnsServer, dnsServerPort, dnsServerName) {
-    super(dnsName, 'TLS', cacheSize, preSetIpList)
-    this.dnsServer = dnsServer
+  constructor (dnsName, cacheSize, preSetIpList, dnsServer, dnsServerPort, dnsFamily, dnsServerName) {
+    super(dnsServer.replace(/\s+/, ''), dnsFamily, dnsName, 'TLS', cacheSize, preSetIpList)
     this.dnsServerPort = Number.parseInt(dnsServerPort) || defaultPort
     this.dnsServerName = dnsServerName
     this.isIPv6 = dnsServer.includes(':') && dnsServer.includes('[') && dnsServer.includes(']')
   }
 
-  async _doDnsQuery (hostname, options = {}) {
-    const queryOptions = {
+  _dnsQueryPromise (hostname, type = 'A') {
+    const options = {
       host: this.dnsServer,
       port: this.dnsServerPort,
       servername: this.dnsServerName || this.dnsServer,
-      family: this.isIPv6 ? 6 : 4,
+      family: this.dnsFamily,
+      rejectUnauthorized: !this.dnsServerName,
 
       name: hostname,
       klass: 'IN',
-      type: options.family === 6 ? 'AAAA' : 'A',
+      type,
+
+      timeout: 4000,
     }
 
-    return await dnstls.query(queryOptions)
+    return dnstls.query(options)
   }
 }

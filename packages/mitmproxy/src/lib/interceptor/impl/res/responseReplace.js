@@ -3,6 +3,8 @@ const cacheReq = require('../req/cacheRequest')
 
 const REMOVE = '[remove]'
 
+const FILENAME_RE = /^.*\/([^/?]+)\/?(\?.*)?$/
+
 // 替换响应头
 function replaceResponseHeaders (newHeaders, res, proxyRes) {
   if (!newHeaders || lodash.isEmpty(newHeaders)) {
@@ -29,7 +31,7 @@ function replaceResponseHeaders (newHeaders, res, proxyRes) {
     const headerKey = proxyRes.rawHeaders[i].toLowerCase()
 
     const newHeaderValue = newHeaders[headerKey]
-    if (newHeaderValue) {
+    if (newHeaderValue != null) {
       if (newHeaderValue !== proxyRes.rawHeaders[i + 1]) {
         preHeaders[headerKey] = proxyRes.rawHeaders[i + 1] // 先保存原先响应头
         if (newHeaderValue === REMOVE) { // 由于拦截配置中不允许配置null，会被删，所以配置一个 "[remove]"，当作删除响应头的意思
@@ -78,11 +80,12 @@ module.exports = {
 
     let actions = ''
 
-    const replaceHeaders = responseReplaceConfig.headers || {}
+    // 浅拷贝配置中的 headers
+    const replaceHeaders = { ...(responseReplaceConfig.headers || {}) }
 
     // 处理文件下载请求
     if (responseReplaceConfig.doDownload || rOptions.doDownload) {
-      const filename = (rOptions.path.match('^.*/([^/?]+)/?(\\?.*)?$') || [])[1] || 'UNKNOWN_FILENAME'
+      const filename = (FILENAME_RE.exec(rOptions.path) || [])[1] || 'UNKNOWN_FILENAME'
       // 设置文件下载响应头
       replaceHeaders['content-disposition'] = `attachment; filename="${encodeURIComponent(filename)}"`
       // 设置文件类型
@@ -92,9 +95,9 @@ module.exports = {
       // 如果未手动配置需要缓存，则不允许使用缓存
       const maxAge = cacheReq.getMaxAge(interceptOpt)
       if (maxAge == null || maxAge <= 0) {
-        replaceHeaders['cache-control'] = '[remove]'
-        replaceHeaders['last-modified'] = '[remove]'
-        replaceHeaders.expires = '[remove]'
+        replaceHeaders['cache-control'] = REMOVE
+        replaceHeaders['last-modified'] = REMOVE
+        replaceHeaders.expires = REMOVE
       }
 
       actions += `${actions ? ',' : ''}download:${filename}`

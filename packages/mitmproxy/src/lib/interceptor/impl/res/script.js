@@ -7,14 +7,27 @@ const SCRIPT_URL_PRE = '/____ds_script____/' // 内置脚本的请求地址前�
 const SCRIPT_PROXY_URL_PRE = '/____ds_script_proxy____/' // 绝对地址脚本的伪脚本地址前缀
 const REMOVE = '[remove]' // 标记需要移除的头信息
 
-function getScript (key, script) {
+function getScript (key, script, nonce) {
   const scriptUrl = SCRIPT_URL_PRE + key
-  // const hash = CryptoJs.SHA256(script).toString(CryptoJs.enc.Base64)
-  // return `<script crossorigin="anonymous" defer="defer" type="application/javascript" src="${scriptUrl}" integrity="sha256-${hash}"></script>`
-  return `<script crossorigin="anonymous" defer="defer" type="application/javascript" src="${scriptUrl}"></script>`
+  return `<script crossorigin="anonymous" defer="defer" type="application/javascript" src="${scriptUrl}"${nonce}></script>`
 }
-function getScriptByUrlOrPath (scriptUrlOrPath) {
-  return `<script crossorigin="anonymous" defer="defer" type="application/javascript" src="${scriptUrlOrPath}"></script>`
+function getScriptByUrlOrPath (scriptUrlOrPath, nonce) {
+  return `<script crossorigin="anonymous" defer="defer" type="application/javascript" src="${scriptUrlOrPath}"${nonce}></script>`
+}
+
+// 从 CSP 头中提取 nonce 值，用于注入脚本以通过 'strict-dynamic' 检查
+function getNonceAttr (proxyRes) {
+  // CSP 可能在 content-security-policy 或 content-security-policy-report-only 中
+  const csp = proxyRes.headers['content-security-policy']
+    || proxyRes.headers['content-security-policy-report-only']
+  if (!csp) return ''
+  // 支持单引号和双引号包裹的 nonce 值
+  const match = csp.match(/['"]nonce-([^'"]+)['"]/)
+  if (!match) {
+    log.warn('getNonce: CSP 存在但未匹配到 nonce, CSP:', csp.substring(0, 500))
+    return ''
+  }
+  return ` nonce="${match[1]}"`
 }
 
 module.exports = {
@@ -42,6 +55,8 @@ module.exports = {
       // 内置脚本列表
       const scripts = monkey.get(setting.script.dirAbsolutePath)
 
+      const nonce = getNonceAttr(proxyRes)
+
       let tags = ''
       for (const key of keys) {
         if (key === 'global' || key === 'tampermonkey') {
@@ -51,13 +66,13 @@ module.exports = {
         let scriptTag
 
         if (key.includes('/')) {
-          scriptTag = getScriptByUrlOrPath(key) // 1.绝对地址或相对地址（注意：当目标站点限制跨域脚本时，可使用相对地址，再结合proxy拦截器进行代理，可规避掉限制跨域脚本问题。）
+          scriptTag = getScriptByUrlOrPath(key, nonce) // 1.绝对地址或相对地址
         } else {
           const script = scripts[key]
           if (script == null) {
             continue
           }
-          scriptTag = getScript(key, script.script) // 2.DS内置脚本
+          scriptTag = getScript(key, script.script, nonce) // 2.DS内置脚本
         }
 
         tags += `\r\n\t${scriptTag}`
@@ -70,9 +85,14 @@ module.exports = {
 
       // 插入油猴脚本浏览器扩展
       if (typeof interceptOpt.tampermonkeyScript === 'string') {
-        tags = `\r\n\t${getScriptByUrlOrPath(interceptOpt.tampermonkeyScript)}${tags}`
+        tags = `\r\n\t${getScriptByUrlOrPath(interceptOpt.tampermonkeyScript, nonce)}${tags}`
       } else {
-        tags = `\r\n\t${getScript('tampermonkey', scripts.tampermonkey.script)}${tags}`
+        tags = `\r\n\t${getScript('tampermonkey', scripts.tampermonkey.script, nonce)}${tags}`
+      }
+
+      // github特殊处理: 增加一个假的js文件，避免github的js异步加载策略获得错误的根路径
+      if (rOptions.hostname === 'github.com') {
+        tags += `\r\n\t${getScriptByUrlOrPath('https://github.githubassets.com/assets/fakefile.js', nonce)}`
       }
 
       res.setHeader('DS-Script-Interceptor', 'true')

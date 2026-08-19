@@ -1,9 +1,12 @@
-const url = require('node:url')
+const URL = require('node:url')
 const tunnelAgent = require('tunnel-agent')
 const log = require('../../../utils/util.log.server')
 const matchUtil = require('../../../utils/util.match')
 const Agent = require('./ProxyHttpAgent')
 const HttpsAgent = require('./ProxyHttpsAgent')
+
+// 匹配形如 `[::1]` 或 `[::1]:443` 的 IPv6 地址（带或不带端口）
+const IPv6_HOST_RE = /^(\[[^\]]+\])(?::(\d+))?$/
 
 const util = exports
 
@@ -14,22 +17,50 @@ let socketId = 0
 
 let httpsOverHttpAgent, httpOverHttpsAgent, httpsOverHttpsAgent
 
+function normalizeTlsVersion (tlsVersion) {
+  if (tlsVersion === 'TLSv1.2' || tlsVersion === '1.2' || tlsVersion === 'tls1.2') {
+    return 'TLSv1.2'
+  }
+  if (tlsVersion === 'TLSv1.3' || tlsVersion === '1.3' || tlsVersion === 'tls1.3') {
+    return 'TLSv1.3'
+  }
+  return ''
+}
+
 function getTimeoutConfig (hostname, serverSetting) {
   const timeoutMapping = serverSetting.timeoutMapping
 
   const timeoutConfig = matchUtil.matchHostname(timeoutMapping, hostname, 'get timeoutConfig') || {}
 
+  // 按域名指定 TLS 版本（优先级高于 allowTls12）
+  // 支持两种配置：
+  //   1. "TLSv1.2"                              -> 启用
+  //   2. { enabled: true/false, version: "..." } -> 可远程下发后由用户自行启用
+  const tlsVersionMapping = matchUtil.domainMapRegexply(serverSetting.tlsVersionMapping)
+  const tlsVersionConf = matchUtil.matchHostname(tlsVersionMapping, hostname, 'get tlsVersion')
+  let tlsVersion = ''
+  if (typeof tlsVersionConf === 'string') {
+    tlsVersion = normalizeTlsVersion(tlsVersionConf)
+  } else if (tlsVersionConf && typeof tlsVersionConf === 'object' && tlsVersionConf.enabled !== false) {
+    tlsVersion = normalizeTlsVersion(tlsVersionConf.version || tlsVersionConf.value)
+  }
+
   return {
     timeout: timeoutConfig.timeout || serverSetting.defaultTimeout || 20000,
     keepAliveTimeout: timeoutConfig.keepAliveTimeout || serverSetting.defaultKeepAliveTimeout || 30000,
+    allowTls12: serverSetting.allowTls12 === true,
+    tlsVersion,
   }
 }
 
 function createHttpsAgent (timeoutConfig, verifySsl) {
-  const key = `${timeoutConfig.timeout}-${timeoutConfig.keepAliveTimeout}`
+  verifySsl = !!verifySsl
+  const allowTls12 = timeoutConfig.allowTls12 === true
+  // 按域名指定 TLS 版本时，强制只使用该版本；否则跟随全局 allowTls12 开关
+  const minVersion = timeoutConfig.tlsVersion || (allowTls12 ? 'TLSv1.2' : 'TLSv1.3')
+  const maxVersion = timeoutConfig.tlsVersion || 'TLSv1.3'
+  const key = `${timeoutConfig.timeout}-${timeoutConfig.keepAliveTimeout}-${minVersion}-${maxVersion}-${verifySsl ? 'verify' : 'noverify'}`
   if (!httpsAgentCache[key]) {
-    verifySsl = !!verifySsl
-
     // 证书回调函数
     const checkServerIdentity = (host, cert) => {
       log.info(`checkServerIdentity: ${host}, CN: ${cert.subject.CN}, C: ${cert.subject.C || cert.issuer.C}, ST: ${cert.subject.ST || cert.issuer.ST}, bits: ${cert.bits}`)
@@ -41,6 +72,8 @@ function createHttpsAgent (timeoutConfig, verifySsl) {
       keepAliveTimeout: timeoutConfig.keepAliveTimeout,
       checkServerIdentity,
       rejectUnauthorized: verifySsl,
+      minVersion,
+      maxVersion,
     })
 
     agent.unVerifySslAgent = new HttpsAgent({
@@ -49,6 +82,8 @@ function createHttpsAgent (timeoutConfig, verifySsl) {
       keepAliveTimeout: timeoutConfig.keepAliveTimeout,
       checkServerIdentity,
       rejectUnauthorized: false,
+      minVersion,
+      maxVersion,
     })
 
     httpsAgentCache[key] = agent
@@ -77,7 +112,7 @@ function createAgent (protocol, timeoutConfig, verifySsl) {
 }
 
 util.parseHostnameAndPort = (host, defaultPort) => {
-  let arr = host.match(/^(\[[^\]]+\])(?::(\d+))?$/) // 尝试解析IPv6
+  let arr = host.match(IPv6_HOST_RE) // 尝试解析IPv6
   if (arr) {
     arr = arr.slice(1)
     if (arr[1]) {
@@ -101,10 +136,21 @@ util.parseHostnameAndPort = (host, defaultPort) => {
 
 util.getOptionsFromRequest = (req, ssl, externalProxy = null, serverSetting, compatibleConfig = null) => {
   // eslint-disable-next-line node/no-deprecated-api
-  const urlObject = url.parse(req.url)
-  const defaultPort = ssl ? 443 : 80
-  const protocol = ssl ? 'https:' : 'http:'
-  const headers = Object.assign({}, req.headers)
+  const urlObj = URL.parse(req.url)
+
+  // 修复：当 ssl=true（请求来自HTTPS代理端口）但请求URL是绝对HTTP路径时，
+  // 说明这是HTTP请求被错误发送到了HTTPS代理端口。
+  // 例：GET http://example.com/path HTTP/1.1 被发送到HTTPS代理端口。
+  // 此时应修正协议为HTTP，避免将HTTP请求以HTTPS方式转发到目标服务器。
+  const isHttpAbsUrl = !!(urlObj.protocol === 'http:' && urlObj.hostname)
+  const actualSsl = ssl && !isHttpAbsUrl
+  const defaultPort = actualSsl ? 443 : 80
+  const protocol = actualSsl ? 'https:' : 'http:'
+  // 过滤 HTTP/2 伪头（:method, :path, :authority, :scheme），
+  // 它们在上游 HTTP/1.1 请求中不合法
+  const headers = Object.fromEntries(
+    Object.entries(req.headers).filter(([key]) => !key.startsWith(':')),
+  )
   let externalProxyUrl = null
 
   if (externalProxy) {
@@ -147,20 +193,23 @@ util.getOptionsFromRequest = (req, ssl, externalProxy = null, serverSetting, com
     url: req.url,
     hostname,
     port,
-    path: urlObject.path,
-    headers: req.headers,
+    path: urlObj.path,
+    headers,
     agent,
     compatibleConfig,
+    // 增大响应头大小限制（默认 16KB），
+    // 解决 issue #575 中 Google Cloud Console 等站点响应头过大导致的 HPE_HEADER_OVERFLOW 错误
+    maxHeaderSize: 65536,
   }
 
-  // eslint-disable-next-line node/no-deprecated-api
-  if (protocol === 'http:' && externalProxyUrl && (url.parse(externalProxyUrl)).protocol === 'http:') {
+  if (protocol === 'http:' && externalProxyUrl) {
     // eslint-disable-next-line node/no-deprecated-api
-    const externalURL = url.parse(externalProxyUrl)
-    options.hostname = externalURL.hostname
-    options.port = externalURL.port
-    // support non-transparent proxy
-    options.path = `http://${urlObject.host}${urlObject.path}`
+    const externalUrlObj = URL.parse(externalProxyUrl)
+    if (externalUrlObj.protocol === 'http:') {
+      options.hostname = externalUrlObj.hostname
+      options.port = externalUrlObj.port
+      options.path = `http://${externalUrlObj.host}${externalUrlObj.path}`
+    }
   }
 
   // mark a socketId for Agent to bind socket for NTLM
@@ -175,13 +224,13 @@ util.getOptionsFromRequest = (req, ssl, externalProxy = null, serverSetting, com
 
 util.getTunnelAgent = (requestIsSSL, externalProxyUrl) => {
   // eslint-disable-next-line node/no-deprecated-api
-  const urlObject = url.parse(externalProxyUrl)
-  const protocol = urlObject.protocol || 'http:'
-  let port = urlObject.port
+  const urlObj = URL.parse(externalProxyUrl)
+  const protocol = urlObj.protocol || 'http:'
+  let port = urlObj.port
   if (!port) {
     port = protocol === 'http:' ? 80 : 443
   }
-  const hostname = urlObject.hostname || 'localhost'
+  const hostname = urlObj.hostname || 'localhost'
 
   if (requestIsSSL) {
     if (protocol === 'http:') {

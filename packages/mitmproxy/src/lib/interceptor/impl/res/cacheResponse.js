@@ -1,5 +1,7 @@
 const cacheReq = require('../req/cacheRequest')
 
+const MAX_AGE_RE = /max-age=(\d+)/i
+
 module.exports = {
   name: 'cacheResponse',
   priority: 202,
@@ -63,7 +65,7 @@ module.exports = {
 
     // 判断原max-age是否大于新max-age
     if (originalHeaders.cacheControl) {
-      const maxAgeMatch = originalHeaders.cacheControl.value.match(/max-age=(\d+)/i)
+      const maxAgeMatch = MAX_AGE_RE.exec(originalHeaders.cacheControl.value)
       if (maxAgeMatch && Number.parseInt(maxAgeMatch[1]) > maxAge) {
         if (interceptOpt.cacheImmutable !== false && !originalHeaders.cacheControl.value.includes('immutable')) {
           maxAge = Number.parseInt(maxAgeMatch[1])
@@ -108,5 +110,14 @@ module.exports = {
   is (interceptOpt) {
     const maxAge = cacheReq.getMaxAge(interceptOpt)
     return maxAge != null && maxAge > 0
+  },
+  // 简单处理方法
+  simpleHandle (interceptOpt, res) {
+    const maxAge = cacheReq.getMaxAge(interceptOpt)
+    if (maxAge == null || maxAge <= 0) {
+      return
+    }
+
+    res.setHeader('Cache-Control', `public, max-age=${maxAge + 1}, immutable`)
   },
 }

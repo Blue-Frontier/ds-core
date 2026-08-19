@@ -11,6 +11,11 @@ function getRootCaKeyPath () {
 
 const defaultConfig = {
   app: {
+    metaInfo: {
+      updateLog: 'GUI v2.0.2自带配置',
+      version: 202604122348,
+      id: 'internal',
+    },
     mode: 'default',
     autoStart: {
       enabled: false,
@@ -18,7 +23,7 @@ const defaultConfig = {
     remoteConfig: {
       enabled: true,
       // 共享远程配置地址
-      url: 'https://gitee.com/wangliang181230/dev-sidecar/raw/docmirror2.x/packages/core/src/config/remote_config.json',
+      url: 'https://raw.giteeusercontent.com/wangliang181230/dev-sidecar-config/raw/main/remote_config.json',
       // 个人远程配置地址
       personalUrl: '',
     },
@@ -36,6 +41,7 @@ const defaultConfig = {
     showShutdownTip: true,
 
     // 日志相关配置
+    logDisabled: false, // 完全禁用日志：控制台不输出，日志文件也不写入
     logFileSavePath: path.join(configLoader.getUserBasePath(), '/logs'), // 日志文件保存路径
     keepLogFileCount: 15, // 保留日志文件数
     maxLogFileSize: 1, // 最大日志文件大小
@@ -45,9 +51,11 @@ const defaultConfig = {
     enabled: true,
     host: '127.0.0.1',
     port: 31181,
+    fakeServerMaxLength: 100, // fakeServer的最大缓存数量
     setting: {
       NODE_TLS_REJECT_UNAUTHORIZED: true,
       verifySsl: true,
+      allowTls12: false,
       script: {
         enabled: true,
         defaultDir: './extra/scripts/',
@@ -92,6 +100,11 @@ const defaultConfig = {
         // }
       },
     },
+    // Cloudflare 路由重定向：命中 Cloudflare IP 段时改写为优选地址
+    cloudflareRoute: {
+      enabled: false,
+      preferredEndpoint: '', // 优选地址，可填写 IP 或 CNAME 域名
+    },
     intercept: {
       enabled: true,
     },
@@ -102,9 +115,9 @@ const defaultConfig = {
         },
         '^(/[\\w-.]+){2,}/?(\\?.*)?$': {
           // 篡改猴插件地址，以下是高速镜像地址
-          tampermonkeyScript: 'https://gitee.com/wangliang181230/dev-sidecar/raw/scripts/tampermonkey.js',
+          tampermonkeyScript: 'https://raw.giteeusercontent.com/wangliang181230/dev-sidecar-config/raw/main/tampermonkey.js',
           // Github油猴脚本地址，以下是高速镜像地址
-          script: 'https://gitee.com/wangliang181230/dev-sidecar/raw/scripts/GithubEnhanced-High-Speed-Download.user.js',
+          script: 'https://raw.giteeusercontent.com/wangliang181230/dev-sidecar-config/raw/main/GithubEnhanced-High-Speed-Download.user.js',
           remark: '注：上面所使用的脚本地址，为高速镜像地址。',
           desc: '油猴脚本：高速下载 Git Clone/SSH、Release、Raw、Code(ZIP) 等文件 (公益加速)、项目列表单文件快捷下载、添加 git clone 命令',
         },
@@ -215,14 +228,22 @@ const defaultConfig = {
       },
       'ajax.googleapis.com': {
         '.*': {
-          proxy: 'ajax.lug.ustc.edu.cn',
+          proxy: 'ajax.proxy.ustclug.org',
           backup: ['gapis.geekzu.org'],
           test: 'ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js',
         },
       },
       'fonts.googleapis.com': {
         '.*': {
-          proxy: 'fonts.loli.net',
+          proxy: 'fonts.googleapis.cn',
+          backup: ['fonts.loli.net'],
+          test: 'https://fonts.googleapis.com/css?family=Oswald',
+        },
+      },
+      'fonts.gstatic.com': {
+        '.*': {
+          proxy: 'fonts-gstatic.proxy.ustclug.org',
+          backup: ['gstatic.loli.net'],
           test: 'https://fonts.googleapis.com/css?family=Oswald',
         },
       },
@@ -235,19 +256,13 @@ const defaultConfig = {
       'themes.googleusercontent.com': {
         '.*': { proxy: 'google-themes.proxy.ustclug.org' },
       },
-      // 'fonts.gstatic.com': {
-      //   '.*': {
-      //     proxy: 'gstatic.loli.net',
-      //     backup: ['fonts-gstatic.proxy.ustclug.org']
-      //   }
-      // },
       'clients*.google.com': { '.*': { abort: false, desc: '设置abort：true可以快速失败，节省时间' } },
       'www.googleapis.com': { '.*': { abort: false, desc: '设置abort：true可以快速失败，节省时间' } },
       'lh*.googleusercontent.com': { '.*': { abort: false, desc: '设置abort：true可以快速失败，节省时间' } },
       // mapbox-node-binary.s3.amazonaws.com/sqlite3/v5.0.0/napi-v3-win32-x64.tar.gz
       '*.s3.1amazonaws1.com': {
         '/sqlite3/.*': {
-          redirect: 'npm.taobao.org/mirrors',
+          redirect: 'npmmirror.com/mirrors',
         },
       },
       // 'packages.elastic.co': { '.*': { proxy: 'elastic.proxy.ustclug.org' } },
@@ -374,30 +389,21 @@ const defaultConfig = {
     },
     dns: {
       providers: {
+        safe360: {
+          server: 'tls://dot.360.cn',
+          forSNI: true,
+        },
         aliyun: {
-          type: 'https',
-          server: 'https://dns.alidns.com/dns-query',
-          cacheSize: 1000,
+          server: 'tls://dns.alidns.com',
         },
         cloudflare: {
-          type: 'https',
           server: 'https://1.1.1.1/dns-query',
-          cacheSize: 1000,
         },
         quad9: {
-          type: 'https',
           server: 'https://9.9.9.9/dns-query',
-          cacheSize: 1000,
-        },
-        safe360: {
-          type: 'https',
-          server: 'https://doh.360.cn/dns-query',
-          cacheSize: 1000,
         },
         rubyfish: {
-          type: 'https',
           server: 'https://rubyfish.cn/dns-query',
-          cacheSize: 1000,
         },
       },
       mapping: {
@@ -418,6 +424,31 @@ const defaultConfig = {
         '*.pypi.org': 'quad9',
         '*.jetbrains.com': 'quad9',
         '*.azureedge.net': 'quad9',
+      },
+      /*
+       * 原本是想将 mapping 中的数据结构由 string 改为 object，但是这样会导致新的配置无法向下兼容，所以将family配置，放到下面的 familyMapping 中
+       *
+       * @param family 可选值：4（只查询IPv4地址，默认值）、6（只查询IPv6地址）......暂不支持同时查IPv4和IPv6地址
+       * @since 2.0.2
+       */
+      familyMapping: {
+        '*.github.com': '4',
+        '*github*.com': '4',
+        '*.github.io': '4',
+        '*.docker.com': '4',
+        '*.stackoverflow.com': '4',
+        '*.electronjs.org': '4',
+        '*.amazonaws.com': '4',
+        '*.yarnpkg.com': '4',
+        '*.cloudfront.net': '4',
+        '*.cloudflare.com': '4',
+        'img.shields.io': '4',
+        '*.vuepress.vuejs.org': '4',
+        '*.gh.docmirror.top': '4',
+        '*.v2ex.com': '4',
+        '*.pypi.org': '4',
+        '*.jetbrains.com': '4',
+        '*.azureedge.net': '4',
       },
       speedTest: {
         enabled: true,

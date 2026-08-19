@@ -1,13 +1,18 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const lodash = require('lodash')
-const jsonApi = require('./json')
+const { LRUCache } = require('lru-cache')
 const dnsUtil = require('./lib/dns')
 const interceptorImpls = require('./lib/interceptor')
 const scriptInterceptor = require('./lib/interceptor/impl/res/script')
 const { getTmpPacFilePath, downloadPacAsync, createOverwallMiddleware } = require('./lib/proxy/middleware/overwall')
 const log = require('./utils/util.log.server')
 const matchUtil = require('./utils/util.match')
+
+// 每个域名的路径级拦截器缓存的最大条数。
+// 对于使用 .* 路径模式的域名（如 api.github.com），每个唯一 URL（含不同 query string）都会生成独立的缓存条目。
+// 设置上限，超出后清空最久未使用的缓存，防止长期运行时因 API 分页/唯一 token 等导致内存无界增长。
+const PATH_CACHE_MAX_SIZE = 512
 
 // 处理拦截配置
 function buildIntercepts (intercepts) {
@@ -36,12 +41,35 @@ function getExclusionArray (exclusions) {
   return ret
 }
 
+function handleDnsMapping (dnsMapping, familyMapping) {
+  // 循环读取所有key value
+  for (const hostname in dnsMapping) {
+    const value = dnsMapping[hostname]
+    if (value == null) {
+      delete dnsMapping[hostname]
+      continue
+    }
+
+    if (typeof value === 'string') {
+      dnsMapping[hostname] = {
+        dnsName: value,
+        family: Number.parseInt(familyMapping[hostname]) === 6 ? 6 : 4,
+      }
+    } else if (value.dnsName == null) {
+      log.warn(`域名 ${hostname} 的DNS配置有误，未配置dnsName，配置值：`, value)
+      delete dnsMapping[hostname]
+    }
+  }
+
+  return dnsMapping
+}
+
 module.exports = (serverConfig) => {
   const intercepts = matchUtil.domainMapRegexply(buildIntercepts(serverConfig.intercepts))
   const whiteList = matchUtil.domainMapRegexply(serverConfig.whiteList)
   const timeoutMapping = matchUtil.domainMapRegexply(serverConfig.setting.timeoutMapping)
 
-  const dnsMapping = serverConfig.dns.mapping
+  const dnsMapping = handleDnsMapping(serverConfig.dns.mapping, serverConfig.dns.familyMapping || {})
   const setting = serverConfig.setting
 
   if (!setting.script.dirAbsolutePath) {
@@ -92,6 +120,7 @@ module.exports = (serverConfig) => {
   const options = {
     host: serverConfig.host,
     port: serverConfig.port,
+    maxLength: serverConfig.fakeServerMaxLength,
     dnsConfig: {
       preSetIpList,
       dnsMap: dnsUtil.initDNS(serverConfig.dns.providers, preSetIpList),
@@ -110,7 +139,7 @@ module.exports = (serverConfig) => {
       // 配置了白名单的域名，将跳过代理
       const inWhiteList = !!matchUtil.matchHostname(whiteList, hostname, 'in whiteList')
       if (inWhiteList) {
-        log.info(`为白名单域名，不拦截: ${hostname}, headers:`, jsonApi.stringify2(req.headers))
+        log.info(`为白名单域名，不拦截: ${hostname}`)
         return false // 不拦截
       }
 
@@ -130,9 +159,31 @@ module.exports = (serverConfig) => {
         return
       }
 
+      // 获取缓存：同一 hostname+path 的拦截器列表是固定的，不必每次重新构建
+      // 注：缓存 key 使用完整路径（含 query string），以保证正则捕获组（matched）的正确性
+      // 注：采用 LRU 淘汰策略，上限为 PATH_CACHE_MAX_SIZE 条；利用 Map 按插入顺序迭代的特性，命中时删除后重新插入以更新位置
+      if (!interceptOpts._pathCache) {
+        const cache = new LRUCache({
+          maxSize: PATH_CACHE_MAX_SIZE,
+          sizeCalculation: () => {
+            return 1
+          },
+        })
+        Object.defineProperty(interceptOpts, '_pathCache', { value: cache, enumerable: false, configurable: true })
+      } else {
+        const cached = interceptOpts._pathCache.get(rOptions.path)
+        if (cached) {
+          return cached
+        }
+      }
+
       const matchIntercepts = []
       const matchInterceptsOpts = {}
       for (const regexp in interceptOpts) { // 遍历拦截配置
+        // 跳过hostname匹配结果，它不是路径正则
+        if (regexp === 'matched') {
+          continue
+        }
         // 判断是否匹配拦截器
         const matched = matchUtil.isMatched(rOptions.path, regexp)
         if (matched == null) { // 拦截器匹配失败
@@ -141,7 +192,7 @@ module.exports = (serverConfig) => {
 
         // 获取拦截器
         const interceptOpt = interceptOpts[regexp]
-        // interceptOpt.key = regexp
+        interceptOpt.key = regexp
 
         // 添加exclusions字段，用于排除某些路径
         // @since 1.8.5
@@ -187,12 +238,12 @@ module.exports = (serverConfig) => {
             if (impl.requestIntercept) {
               // req拦截器
               interceptor.requestIntercept = (context, req, res, ssl, next) => {
-                return impl.requestIntercept(context, interceptOpt, req, res, ssl, next, matched)
+                return impl.requestIntercept(context, interceptOpt, req, res, ssl, next, matched, interceptOpts.matched)
               }
             } else if (impl.responseIntercept) {
               // res拦截器
               interceptor.responseIntercept = (context, req, res, proxyReq, proxyRes, ssl, next) => {
-                return impl.responseIntercept(context, interceptOpt, req, res, proxyReq, proxyRes, ssl, next, matched)
+                return impl.responseIntercept(context, interceptOpt, req, res, proxyReq, proxyRes, ssl, next, matched, interceptOpts.matched)
               }
             }
 
@@ -204,7 +255,7 @@ module.exports = (serverConfig) => {
             }
             matchInterceptsOpts[impl.name] = {
               order: interceptOpt.order || 0,
-              index: matchIntercepts.length - 1,
+              index: action === 'replace' ? matchedInterceptOpt.index : matchIntercepts.length - 1,
             }
           }
         }
@@ -216,6 +267,9 @@ module.exports = (serverConfig) => {
       // for (const interceptor of matchIntercepts) {
       //   log.info('interceptor:', interceptor.name, 'priority:', interceptor.priority)
       // }
+
+      // 设置缓存
+      interceptOpts._pathCache.set(rOptions.path, matchIntercepts)
 
       return matchIntercepts
     },

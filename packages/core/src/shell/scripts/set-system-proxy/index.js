@@ -5,6 +5,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const request = require('request')
 const Registry = require('winreg')
+const sudoPrompt = require('@vscode/sudo-prompt')
 const log = require('../../../utils/util.log.core')
 const Shell = require('../../shell')
 const extraPath = require('../extra-path')
@@ -24,12 +25,81 @@ function getDomesticDomainAllowListTmpFilePath () {
   return path.join(config.get().server.setting.userBasePath, '/domestic-domain-allowlist.txt')
 }
 
+// 通过 HKCU\Environment 注册表直接写入/删除环境变量，避免每次 setx 都启动 PowerShell 造成数秒卡顿
+function createEnvRegKey () {
+  return new Registry({
+    hive: Registry.HKCU,
+    key: '\\Environment',
+  })
+}
+
+function setWindowsEnvVariable (regKey, key, value) {
+  return new Promise((resolve, reject) => {
+    regKey.set(key, Registry.REG_SZ, value == null ? '' : String(value), (err) => {
+      if (err) {
+        reject(err)
+      } else {
+        resolve()
+      }
+    })
+  })
+}
+
+function removeWindowsEnvVariable (regKey, key) {
+  return new Promise((resolve) => {
+    regKey.remove(key, (removeErr) => {
+      resolve(!removeErr)
+    })
+  })
+}
+
+async function broadcastWindowsEnvChange (exec) {
+  try {
+    await exec('setx DS_REFRESH "1"', { type: 'cmd' })
+  } catch {
+    // 广播失败不影响主流程
+  }
+}
+
+async function setWindowsEnvVariables (exec, envList) {
+  if (!envList || envList.length === 0) {
+    return
+  }
+
+  const regKey = createEnvRegKey()
+  for (const item of envList) {
+    await setWindowsEnvVariable(regKey, item.key, item.value)
+    process.env[item.key] = String(item.value)
+  }
+  await broadcastWindowsEnvChange(exec)
+}
+
+async function removeWindowsEnvVariables (exec, keys) {
+  if (!keys || keys.length === 0) {
+    return
+  }
+
+  const regKey = createEnvRegKey()
+  let removed = false
+  for (const key of keys) {
+    const existed = await removeWindowsEnvVariable(regKey, key)
+    if (existed) {
+      delete process.env[key]
+      removed = true
+    }
+  }
+  if (removed) {
+    await broadcastWindowsEnvChange(exec)
+  }
+}
+
 async function downloadDomesticDomainAllowListAsync () {
   loadConfig()
 
   const remoteFileUrl = config.get().proxy.remoteDomesticDomainAllowListFileUrl
   log.info('开始下载远程 domestic-domain-allowlist.txt 文件:', remoteFileUrl)
-  request(remoteFileUrl, (error, response, body) => {
+  // 禁用环境变量代理：防止走 dev-sidecar 自己的代理（127.0.0.1:31181）导致启动时下载失败
+  request(remoteFileUrl, { proxy: null }, (error, response, body) => {
     if (error) {
       log.error(`下载远程 domestic-domain-allowlist.txt 文件失败: ${remoteFileUrl}, error:`, error, ', response:', response, ', body:', body)
       return
@@ -183,27 +253,301 @@ function getProxyExcludeIpStr (split) {
   return excludeIpStr
 }
 
+function parseMacNetworkServiceByDevice (networkServiceOrder, device) {
+  if (!networkServiceOrder || !device) {
+    return null
+  }
+  const lines = networkServiceOrder.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes(`Device: ${device}`)) {
+      for (let j = i - 1; j >= 0; j--) {
+        const serviceLine = lines[j].trim()
+        const markerIndex = serviceLine.indexOf(') ')
+        if (serviceLine.startsWith('(') && markerIndex > 0) {
+          return serviceLine.slice(markerIndex + 2).trim()
+        }
+      }
+    }
+  }
+  return null
+}
+
+function parseMacRouteDevice (routeOutput) {
+  if (!routeOutput) {
+    return null
+  }
+  const routeLines = routeOutput.split(/\r?\n/)
+  for (const routeLine of routeLines) {
+    const trimmedLine = routeLine.trim()
+    if (trimmedLine.startsWith('interface:')) {
+      return trimmedLine.slice('interface:'.length).trim() || null
+    }
+  }
+  return null
+}
+
+function pickMacNetworkService (listAllNetworkServicesOutput) {
+  if (!listAllNetworkServicesOutput) {
+    return null
+  }
+  const services = listAllNetworkServicesOutput
+    .split(/\r?\n/)
+    .map(item => item.replace(/^\*/, '').trim())
+    .filter(item => item && !item.startsWith('An asterisk (*) denotes'))
+  if (services.length === 0) {
+    return null
+  }
+  const preferredServices = ['Wi-Fi', 'WiFi', 'Ethernet']
+  for (const preferredService of preferredServices) {
+    const matched = services.find(item => item === preferredService)
+    if (matched) {
+      return matched
+    }
+  }
+  return services[0]
+}
+
+async function getMacNetworkService (exec) {
+  try {
+    const routeOutput = await exec('route -n get 0.0.0.0')
+    const device = parseMacRouteDevice(routeOutput)
+    if (device) {
+      log.info('macOS 代理服务检测：当前网络设备:', device)
+      try {
+        const networkServiceOrder = await exec('networksetup -listnetworkserviceorder')
+        const matchedService = parseMacNetworkServiceByDevice(networkServiceOrder, device)
+        if (matchedService) {
+          log.info('macOS 代理服务检测：通过设备名匹配到网络服务:', matchedService)
+          return matchedService
+        }
+        log.warn('macOS 代理服务检测：未通过设备名匹配到网络服务，尝试备用方法')
+      } catch (e) {
+        log.warn('macOS 代理服务检测：获取网络服务列表失败:', e.message, '，尝试备用方法')
+      }
+    } else {
+      log.warn('macOS 代理服务检测：未检测到当前网络设备，尝试备用方法')
+    }
+  } catch (e) {
+    log.warn('macOS 代理服务检测：获取路由信息失败:', e.message, '，尝试备用方法')
+  }
+
+  try {
+    const allServicesOutput = await exec('networksetup -listallnetworkservices')
+    const fallbackService = pickMacNetworkService(allServicesOutput)
+    if (fallbackService) {
+      log.info('macOS 代理服务检测：通过服务列表备用方法找到网络服务:', fallbackService)
+      return fallbackService
+    }
+    log.warn('macOS 代理服务检测：未通过服务列表找到可用网络服务')
+  } catch (e) {
+    log.warn('macOS 代理服务检测：获取所有网络服务列表失败:', e.message)
+  }
+
+  throw new Error('未找到可用的 macOS 网络服务，无法设置系统代理')
+}
+
+// macOS exit code 14 = "You don't have permission to change the system preferences."
+const MACOS_NETWORKSETUP_PERMISSION_ERROR_CODE = 14
+
+/**
+ * POSIX single-quote escaping: wraps `arg` in single quotes, escaping any
+ * embedded single quotes with the '\''-idiom.  This prevents shell
+ * metacharacter expansion regardless of the character set of the value.
+ * @param {string|number} arg
+ * @returns {string}
+ */
+function shellEscapeArg (arg) {
+  return "'" + String(arg).replace(/'/g, "'\\''") + "'"
+}
+
+/**
+ * Strict-validate a proxy host (IPv4 / IPv6 / hostname) and throw if the
+ * value looks suspicious.  This is a defence-in-depth guard for the sudo
+ * execution path; the primary protection is `shellEscapeArg`.
+ */
+function validateProxyIp (ip) {
+  if (typeof ip !== 'string' || !/^[\w.\-:[\]]+$/.test(ip)) {
+    throw new Error(`无效的代理 IP 地址: ${ip}`)
+  }
+}
+
+/**
+ * Strict-validate a TCP port number.
+ */
+function validateProxyPort (port) {
+  const n = Number(port)
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(`无效的代理端口号: ${port}`)
+  }
+}
+
+function sudoExecMac (cmd) {
+  return new Promise((resolve, reject) => {
+    log.info('以管理员权限执行命令:', cmd)
+    sudoPrompt.exec(cmd, { name: 'dev-sidecar' }, (error, stdout, stderr) => {
+      if (stderr) {
+        log.warn('以管理员权限执行命令，stderr:', stderr)
+      }
+      if (error) {
+        log.error('以管理员权限执行命令失败:', error)
+        reject(error)
+      } else {
+        resolve(stdout)
+      }
+    })
+  })
+}
+
+// ── 环境变量代理设置（Linux/macOS） ───────────────────
+
+const PROXY_ENV_FILE = path.join(
+  process.env.USERPROFILE || process.env.HOME || '/',
+  '.dev-sidecar/proxy.env',
+)
+
+function detectShell () {
+  // 优先使用 $SHELL 环境变量
+  const envShell = process.env.SHELL || ''
+  if (envShell.includes('zsh')) return 'zsh'
+  if (envShell.includes('bash')) return 'bash'
+  if (envShell.includes('fish')) return 'fish'
+
+  // 检查常见 shell 配置文件是否存在
+  const home = process.env.HOME || '/'
+  if (fs.existsSync(path.join(home, '.zshrc'))) return 'zsh'
+  if (fs.existsSync(path.join(home, '.bashrc'))) return 'bash'
+  if (fs.existsSync(path.join(home, '.config/fish/config.fish'))) return 'fish'
+
+  return 'bash' // 默认
+}
+
+function getShellProfilePath (shell) {
+  const home = process.env.HOME || '/'
+  switch (shell) {
+    case 'zsh': return path.join(home, '.zshrc')
+    case 'fish': return path.join(home, '.config/fish/config.fish')
+    case 'bash':
+    default: return path.join(home, '.bashrc')
+  }
+}
+
+function getSourceCommand (shell, envFile) {
+  switch (shell) {
+    case 'fish': return `source "${envFile}"`
+    case 'zsh':
+    case 'bash':
+    default: return `[ -f "${envFile}" ] && source "${envFile}"`
+  }
+}
+
+function getSourceComment (shell) {
+  return '# dev-sidecar proxy'
+}
+
+function writeProxyEnvFile (ip, port, proxyHttp) {
+  const lines = [
+    `export HTTPS_PROXY="http://${ip}:${port}"`,
+    `export https_proxy="http://${ip}:${port}"`,
+  ]
+  if (proxyHttp) {
+    lines.push(`export HTTP_PROXY="http://${ip}:${port - 1}"`)
+    lines.push(`export http_proxy="http://${ip}:${port - 1}"`)
+  }
+  try {
+    fs.mkdirSync(path.dirname(PROXY_ENV_FILE), { recursive: true })
+    fs.writeFileSync(PROXY_ENV_FILE, lines.join('\n') + '\n')
+    log.info('写入代理环境变量文件:', PROXY_ENV_FILE)
+  } catch (e) {
+    log.error('写入代理环境变量文件失败:', e)
+  }
+}
+
+function addProxyEnvToShellProfile () {
+  const shell = detectShell()
+  const profilePath = getShellProfilePath(shell)
+  const sourceLine = getSourceCommand(shell, PROXY_ENV_FILE)
+  const comment = getSourceComment(shell)
+
+  try {
+    let content = ''
+    if (fs.existsSync(profilePath)) {
+      content = fs.readFileSync(profilePath, 'utf-8')
+    }
+    if (!content.includes(sourceLine)) {
+      fs.appendFileSync(profilePath, `\n${comment}\n${sourceLine}\n`)
+      log.info('已添加代理环境变量到:', profilePath)
+      console.log(`代理环境变量已写入 ${profilePath}`)
+      console.log(`请执行 source ${profilePath} 使当前终端生效`)
+    }
+  } catch (e) {
+    log.error('添加代理环境变量到 shell profile 失败:', e)
+  }
+}
+
+function removeProxyEnvFromShellProfile () {
+  // 删除 proxy.env 文件
+  try {
+    if (fs.existsSync(PROXY_ENV_FILE)) {
+      fs.unlinkSync(PROXY_ENV_FILE)
+      log.info('已删除代理环境变量文件:', PROXY_ENV_FILE)
+    }
+  } catch (e) {
+    log.error('删除代理环境变量文件失败:', e)
+  }
+
+  // 从 shell profile 中移除 source 行
+  const shell = detectShell()
+  const profilePath = getShellProfilePath(shell)
+  const sourceLine = getSourceCommand(shell, PROXY_ENV_FILE)
+  const comment = getSourceComment(shell)
+
+  try {
+    if (fs.existsSync(profilePath)) {
+      let content = fs.readFileSync(profilePath, 'utf-8')
+      if (content.includes(sourceLine)) {
+        const escaped = sourceLine.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        content = content.replace(new RegExp(`\n${comment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n${escaped}\n`), '\n')
+        fs.writeFileSync(profilePath, content)
+        log.info('已从 shell profile 移除代理环境变量:', profilePath)
+        console.log(`已从 ${profilePath} 移除代理环境变量`)
+        console.log(`请执行 source ${profilePath} 使当前终端生效`)
+      }
+    }
+  } catch (e) {
+    log.error('从 shell profile 移除代理环境变量失败:', e)
+  }
+}
+
 const executor = {
   async windows (exec, params = {}) {
-    const { ip, port, setEnv } = params
+    const { ip, port, setEnv, setCaBundle } = params
     if (ip != null) { // 设置代理
       // 延迟加载config
       loadConfig()
 
       log.info('开始设置windows系统代理:', ip, port, setEnv)
 
-      // https
-      let proxyAddr = `https=http://${ip}:${port}`
-      // http
-      if (config.get().proxy.proxyHttp) {
-        proxyAddr = `http=http://${ip}:${port - 1};${proxyAddr}`
+      const sysproxy = require('@starknt/sysproxy')
+      const proxyHttp = config.get().proxy.proxyHttp
+
+      // 同时代理 HTTP+HTTPS 时需要两个端口，使用 WinINET 协议格式（协议=地址:端口）；
+      // 只代理 HTTPS 时，地址和端口分开传参，Windows 会按规范分别填入“地址”和“端口”两个框。
+      let proxyAddr
+      if (proxyHttp) {
+        proxyAddr = `http=${ip}:${port - 1};https=${ip}:${port}`
+      } else {
+        proxyAddr = `${ip}:${port}`
       }
 
       // 读取排除域名
       const excludeIpStr = getProxyExcludeIpStr(';')
       // 设置代理，同时设置排除域名
       try {
-        require('@starknt/sysproxy').triggerManualProxyByUrl(true, proxyAddr, excludeIpStr, true)
+        if (proxyHttp) {
+          sysproxy.triggerManualProxyByUrl(true, proxyAddr, excludeIpStr, true)
+        } else {
+          sysproxy.triggerManualProxy(true, ip, port, excludeIpStr)
+        }
         log.info(`设置windows系统代理成功: ${proxyAddr} ......(省略排除IP列表)`)
       } catch (e1) {
         log.warn('设置windows系统代理失败：执行 `@starknt/sysproxy` 失败，现尝试通过执行 `sysproxy.exe global ...` 来设置系统代理！\r\n捕获的异常:', e1)
@@ -222,19 +566,26 @@ const executor = {
       if (setEnv) {
         // 设置全局代理所需的环境变量
         try {
-          await exec(`echo '设置环境变量 HTTPS_PROXY${config.get().proxy.proxyHttp ? '、HTTP_PROXY' : ''}'`)
-
-          log.info(`开启系统代理的同时设置环境变量：HTTPS_PROXY = "http://${ip}:${port}/"`)
-          await exec(`setx HTTPS_PROXY "http://${ip}:${port}/"`)
+          const envList = []
+          const httpsProxy = `http://${ip}:${port}/`
+          log.info(`开启系统代理的同时设置环境变量：HTTPS_PROXY = "${httpsProxy}"`)
+          envList.push({ key: 'HTTPS_PROXY', value: httpsProxy })
 
           if (config.get().proxy.proxyHttp) {
-            log.info(`开启系统代理的同时设置环境变量：HTTP_PROXY = "http://${ip}:${port - 1}/"`)
-            await exec(`setx HTTP_PROXY "http://${ip}:${port - 1}/"`)
+            const httpProxy = `http://${ip}:${port - 1}/`
+            log.info(`开启系统代理的同时设置环境变量：HTTP_PROXY = "${httpProxy}"`)
+            envList.push({ key: 'HTTP_PROXY', value: httpProxy })
           }
 
-          //  await addClearScriptIni()
+          if (setCaBundle) {
+            const caCertPath = config.get().server.setting.rootCaFile.certPath
+            log.info(`开启系统代理的同时设置环境变量：REQUEST_CA_BUNDLE = "${caCertPath}"`)
+            envList.push({ key: 'REQUEST_CA_BUNDLE', value: caCertPath })
+          }
+
+          await setWindowsEnvVariables(exec, envList)
         } catch (e) {
-          log.error('设置环境变量 HTTPS_PROXY、HTTP_PROXY 失败:', e)
+          log.error('设置环境变量 HTTPS_PROXY、HTTP_PROXY、REQUEST_CA_BUNDLE 失败:', e)
         }
       }
 
@@ -258,38 +609,25 @@ const executor = {
       }
 
       try {
-        await exec('echo \'删除环境变量 HTTPS_PROXY、HTTP_PROXY\'')
-        const regKey = new Registry({ // new operator is optional
-          hive: Registry.HKCU, // open registry hive HKEY_CURRENT_USER
-          key: '\\Environment', // key containing autostart programs
-        })
-        regKey.get('HTTPS_PROXY', (err) => {
-          if (!err) {
-            regKey.remove('HTTPS_PROXY', async (err) => {
-              log.warn('删除环境变量 HTTPS_PROXY 失败:', err)
-              await exec('setx DS_REFRESH "1"')
-            })
-          }
-        })
-        regKey.get('HTTP_PROXY', (err) => {
-          if (!err) {
-            regKey.remove('HTTP_PROXY', async (err) => {
-              log.warn('删除环境变量 HTTP_PROXY 失败:', err)
-            })
-          }
-        })
+        await removeWindowsEnvVariables(exec, ['HTTPS_PROXY', 'HTTP_PROXY', 'REQUEST_CA_BUNDLE'])
       } catch (e) {
-        log.error('删除环境变量 HTTPS_PROXY、HTTP_PROXY 失败:', e)
+        log.error('删除环境变量 HTTPS_PROXY、HTTP_PROXY、REQUEST_CA_BUNDLE 失败:', e)
       }
 
       return true
     }
   },
   async linux (exec, params = {}) {
-    const { ip, port } = params
+    const { ip, port, setEnv } = params
     if (ip != null) { // 设置代理
       // 延迟加载config
       loadConfig()
+
+      // 设置环境变量（独立于 gsettings，即使 gsettings 失败也设置）
+      if (setEnv) {
+        writeProxyEnvFile(ip, port, config.get().proxy.proxyHttp)
+        addProxyEnvToShellProfile()
+      }
 
       // https
       const setProxyCmd = [
@@ -310,60 +648,85 @@ const executor = {
       const excludeIpStr = getProxyExcludeIpStr('\', \'')
       setProxyCmd.push(`gsettings set org.gnome.system.proxy ignore-hosts "['${excludeIpStr}']"`)
 
-      await exec(setProxyCmd)
+      try {
+        await exec(setProxyCmd)
+      } catch (e) {
+        log.warn('gsettings 设置系统代理失败（可能无桌面环境），环境变量已设置')
+      }
     } else { // 关闭代理
-      const setProxyCmd = [
-        'gsettings set org.gnome.system.proxy mode none',
-      ]
-      await exec(setProxyCmd)
+      if (setEnv) {
+        removeProxyEnvFromShellProfile()
+      }
+
+      try {
+        await exec(['gsettings set org.gnome.system.proxy mode none'])
+      } catch (e) {
+        log.warn('gsettings 关闭系统代理失败（可能无桌面环境）')
+      }
     }
   },
   async mac (exec, params = {}) {
-    // exec = _exec
-    let wifiAdaptor = await exec('sh -c "networksetup -listnetworkserviceorder | grep `route -n get 0.0.0.0 | grep \'interface\' | cut -d \':\' -f2` -B 1 | head -n 1 "')
-    wifiAdaptor = wifiAdaptor.trim()
-    wifiAdaptor = wifiAdaptor.substring(wifiAdaptor.indexOf(' ')).trim()
-    const { ip, port } = params
+    const wifiAdaptor = await getMacNetworkService(exec)
+    const { ip, port, setEnv } = params
+
+    let cmds
     if (ip != null) { // 设置代理
       // 延迟加载config
       loadConfig()
 
       // https
-      await exec(`networksetup -setsecurewebproxy "${wifiAdaptor}" ${ip} ${port}`)
+      cmds = [`networksetup -setsecurewebproxy "${wifiAdaptor}" ${ip} ${port}`]
       // http
       if (config.get().proxy.proxyHttp) {
-        await exec(`networksetup -setwebproxy "${wifiAdaptor}" ${ip} ${port - 1}`)
+        cmds.push(`networksetup -setwebproxy "${wifiAdaptor}" ${ip} ${port - 1}`)
       } else {
-        await exec(`networksetup -setwebproxystate "${wifiAdaptor}" off`)
+        cmds.push(`networksetup -setwebproxystate "${wifiAdaptor}" off`)
       }
 
       // 设置排除域名
       const excludeIpStr = getProxyExcludeIpStr('" "')
-      await exec(`networksetup -setproxybypassdomains "${wifiAdaptor}" "${excludeIpStr}"`)
-
-      // const setEnv = `cat <<ENDOF >>  ~/.zshrc
-      // export http_proxy="http://${ip}:${port}"
-      // export https_proxy="http://${ip}:${port}"
-      // ENDOF
-      // source ~/.zshrc
-      // `
-      // await exec(setEnv)
+      cmds.push(`networksetup -setproxybypassdomains "${wifiAdaptor}" "${excludeIpStr}"`)
     } else { // 关闭代理
-      // https
-      await exec(`networksetup -setsecurewebproxystate "${wifiAdaptor}" off`)
-      // http
-      await exec(`networksetup -setwebproxystate "${wifiAdaptor}" off`)
+      // https + http
+      cmds = [
+        `networksetup -setsecurewebproxystate "${wifiAdaptor}" off`,
+        `networksetup -setwebproxystate "${wifiAdaptor}" off`,
+      ]
+    }
 
-      // const removeEnv = `
-      // sed -ie '/export http_proxy/d' ~/.zshrc
-      // sed -ie '/export https_proxy/d' ~/.zshrc
-      // source ~/.zshrc
-      // `
-      // await exec(removeEnv)
+    // 先尝试直接执行；若因权限不足（exit code 14）失败，弹出系统授权对话框后重试
+    try {
+      for (const cmd of cmds) {
+        await exec(cmd)
+      }
+    } catch (e) {
+      if (e.code === MACOS_NETWORKSETUP_PERMISSION_ERROR_CODE) {
+        log.warn('networksetup 命令需要管理员权限（exit code 14），正在弹出系统授权对话框...')
+        await sudoExecMac(cmds.join(' && '))
+        log.info('以管理员权限执行 networksetup 命令成功')
+      } else {
+        throw e
+      }
+    }
+
+    // 设置环境变量
+    if (setEnv) {
+      if (ip != null) {
+        loadConfig()
+        writeProxyEnvFile(ip, port, config.get().proxy.proxyHttp)
+        addProxyEnvToShellProfile()
+      } else {
+        removeProxyEnvFromShellProfile()
+      }
     }
   },
 }
 
-module.exports = async function (args) {
+const setSystemProxy = async function (args) {
   return execute(executor, args)
 }
+
+module.exports = setSystemProxy
+module.exports.parseMacNetworkServiceByDevice = parseMacNetworkServiceByDevice
+module.exports.parseMacRouteDevice = parseMacRouteDevice
+module.exports.pickMacNetworkService = pickMacNetworkService

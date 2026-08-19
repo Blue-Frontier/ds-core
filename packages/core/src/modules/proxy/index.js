@@ -17,16 +17,19 @@ const ProxyPlugin = function (context) {
     async setProxy () {
       const ip = '127.0.0.1'
       const port = config.get().server.port
-      const setEnv = config.get().proxy.setEnv
-      await shell.setSystemProxy({ ip, port, setEnv })
+      const proxyConfig = config.get().proxy || {}
+      const setEnv = proxyConfig.setEnv ?? false
+      const setCaBundle = proxyConfig.setCaBundle ?? false
+      await shell.setSystemProxy({ ip, port, setEnv, setCaBundle })
       log.info(`开启系统代理成功：${ip}:${port}`)
       event.fire('status', { key: 'proxy.enabled', value: true })
       return { ip, port }
     },
 
     async unsetProxy (setEnv) {
-      if (setEnv) {
-        setEnv = config.get().proxy.setEnv
+      if (setEnv == null) {
+        const proxyConfig = config.get().proxy || {}
+        setEnv = proxyConfig.setEnv ?? false
       }
       try {
         await shell.setSystemProxy({ setEnv })
@@ -56,6 +59,7 @@ module.exports = {
     other: [],
     proxyHttp: false, // false=只代理HTTPS请求   true=同时代理HTTP和HTTPS请求
     setEnv: false,
+    setCaBundle: false,
 
     // 排除国内域名 所需配置
     excludeDomesticDomainAllowList: true, // 是否排除国内域名，默认：需要排除

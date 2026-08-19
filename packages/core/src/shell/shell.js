@@ -59,14 +59,59 @@ class WindowsSystemShell extends SystemShell {
         ps.dispose()
       }
     } else {
-      let compose = 'chcp 65001' // 'chcp 65001  '
+      await childExecCmdWindows('chcp 65001', args)
+      let ret
       for (const cmd of cmds) {
-        compose += ` && ${cmd}`
+        ret = await childExecCmdWindows(cmd, args)
       }
-      // compose += '&& exit'
-      return await childExec(compose, args)
+      return ret
     }
   }
+}
+
+function childExecCmdWindows (cmd, options = {}) {
+  return new Promise((resolve, reject) => {
+    const execOptions = { ...options, encoding: 'buffer' }
+    delete execOptions.type
+    delete execOptions.printErrorLog
+
+    log.info('shell:', cmd)
+    childProcess.execFile('cmd.exe', ['/d', '/s', '/c', cmd], execOptions, (error, stdout, stderr) => {
+      // 解码输出：CMD 在 chcp 65001 后通常输出 UTF-8，
+      // 但内置错误消息可能仍是系统编码（中文 Windows 为 GBK）
+      const stdoutStr = _decodeBuffer(stdout)
+      if (error) {
+        const stderrStr = _decodeBuffer(stderr)
+        if (options.printErrorLog !== false) {
+          log.error('cmd 命令执行错误：\n===>\ncommands:', cmd, '\n   error:', error, '\n   stderr:', stderrStr, '\n<===')
+        }
+        reject(new Error(stderrStr || error.message))
+      } else {
+        resolve(stdoutStr.replace('Active code page: 65001\r\n', ''))
+      }
+    })
+  })
+}
+
+/**
+ * 解码 Buffer：先尝试 UTF-8，如果包含乱码则尝试 GBK（中文 Windows 控制台编码）
+ */
+function _decodeBuffer (buf) {
+  if (!buf || buf.length === 0) {
+    return ''
+  }
+  const utf8 = buf.toString('utf8')
+  // 如果 UTF-8 解码结果包含替换字符（U+FFFD），说明原始数据不是 UTF-8
+  if (utf8.includes('�')) {
+    try {
+      // 尝试 GBK 解码（Windows 中文系统控制台默认编码）
+      return new TextDecoder('gbk', { fatal: true }).decode(buf)
+    } catch {
+      // GBK 解码失败，回退到 latin1 保留原始字节
+      return buf.toString('latin1')
+    }
+  }
+  return utf8
 }
 
 function childExec (composeCmds, options = {}) {
@@ -77,7 +122,9 @@ function childExec (composeCmds, options = {}) {
         if (options.printErrorLog !== false) {
           log.error('cmd 命令执行错误：\n===>\ncommands:', composeCmds, '\n   error:', error, '\n<===')
         }
-        reject(new Error(stderr))
+        const err = new Error(`${stderr || error.message} (command: ${composeCmds})`)
+        err.code = error.code
+        reject(err)
       } else {
         // log.info('cmd 命令完成：', stdout)
         resolve(stdout.replace('Active code page: 65001\r\n', ''))

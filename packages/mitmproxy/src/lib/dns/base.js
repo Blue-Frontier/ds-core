@@ -1,13 +1,42 @@
-const LRUCache = require('lru-cache')
-const net = require('node:net')
+const { LRUCache } = require('lru-cache')
 const log = require('../../utils/util.log.server')
 const matchUtil = require('../../utils/util.match')
+const { isIPv6 } = require('./util.ip')
 const { DynamicChoice } = require('../choice/index')
+const os = require('node:os')
+
+// 启动时检测系统是否有 IPv6 网络能力（遍历本机网卡），无则过滤所有 IPv6 DNS 结果
+// 注意：忽略 fe80::/10 本地链路地址，它们不代表实际上游 IPv6 连通性
+let ipv6Unavailable = (() => {
+  const nets = os.networkInterfaces()
+  for (const name of Object.keys(nets)) {
+    for (const info of nets[name]) {
+      if (!info.internal && info.family === 'IPv6' && !info.address.startsWith('fe80:')) {
+        return false
+      }
+    }
+  }
+  log.info('未检测到可用的 IPv6 网络接口，将过滤所有 IPv6 DNS 解析结果')
+  return true
+})()
+
+// 运行时兜底：累计 3 次 IPv6 ENETUNREACH 后，认为上游 IPv6 不可达
+let ipv6ErrCount = 0
+function reportIPv6Error (ip) {
+  if (!isIPv6(ip) || ipv6Unavailable) return
+  ipv6ErrCount++
+  if (ipv6ErrCount >= 3) {
+    ipv6Unavailable = true
+    log.warn(`IPv6 地址 ${ip} 多次不可达（ENETUNREACH），已自动禁用 IPv6 DNS 解析`)
+  }
+}
+module.exports.reportIPv6Error = reportIPv6Error
 
 function mapToList (ipMap) {
   const ipList = []
   for (const key in ipMap) {
-    if (ipMap[key]) { // 配置为 ture 时才生效
+    const value = ipMap[key]
+    if (value && value !== 'false' && value !== '0') { // 配置为 ture 时才生效
       ipList.push(key)
     }
   }
@@ -34,16 +63,24 @@ class IpCache extends DynamicChoice {
 }
 
 module.exports = class BaseDNS {
-  constructor (dnsName, dnsType, cacheSize, preSetIpList) {
+  constructor (dnsServer, dnsFamily, dnsName, dnsType, cacheSize, preSetIpList) {
     this.dnsName = dnsName
     this.dnsType = dnsType
     this.preSetIpList = preSetIpList
+
     this.cache = new LRUCache({
       maxSize: (cacheSize > 0 ? cacheSize : defaultCacheSize),
       sizeCalculation: () => {
         return 1
       },
     })
+
+    if (!dnsServer) {
+      return
+    }
+    this.dnsServer = dnsServer
+    this.dnsFamily = Number.parseInt(dnsFamily) || (isIPv6(dnsServer) ? 6 : 4)
+    this.dnsFamily = this.dnsFamily === 6 ? 6 : 4 // 避免值错误
   }
 
   count (hostname, ip, isError = true) {
@@ -57,66 +94,81 @@ module.exports = class BaseDNS {
     try {
       let ipCache = this.cache.get(hostname)
       if (ipCache) {
-        if (ipCache.value != null) {
-          ipCache.doCount(ipCache.value, false)
-          return ipCache.value
+        const ip = ipCache.value
+        if (ip != null) {
+          if (options.ipChecker) {
+            if (options.ipChecker(ip)) {
+              ipCache.doCount(ip, false)
+              log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 获取IP地址缓存: ${hostname} -> ${ip}（测试通过）`)
+              return ip
+            } else {
+              log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 获取IP地址缓存: ${hostname} -> ${ip}（测试不通过）-> ${hostname}`)
+              return hostname
+            }
+          } else {
+            log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 获取IP地址缓存: ${hostname} -> ${ip}`)
+            return ip
+          }
+        } else {
+          log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 未获取到IP地址缓存: ${hostname}`)
         }
       } else {
         ipCache = new IpCache(hostname)
         this.cache.set(hostname, ipCache)
+        log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 首次创建IP地址缓存区: ${hostname}`)
       }
 
-      const t = new Date()
-      let ipList = await this._lookupInternal(hostname, options)
+      const t = Date.now()
+      let ipList = await this._lookupWithPreSetIpList(hostname, options)
       if (ipList == null) {
         // 没有获取到ip
         ipList = []
       }
+      // 本机无 IPv6 网络能力时过滤 IPv6 地址，避免 ENETUNREACH
+      if (ipv6Unavailable) {
+        ipList = ipList.filter(ip => !isIPv6(ip))
+      }
       ipList.push(hostname) // 把原域名加入到统计里去
 
       ipCache.setBackupList(ipList)
-      log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] ${hostname} ➜ ${ipCache.value} (${new Date() - t} ms), ipList: ${JSON.stringify(ipList)}, ipCache:`, JSON.stringify(ipCache))
 
-      return ipCache.value
+      const ip = ipCache.value
+      log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] ${hostname} ➜ ${ip} (${Date.now() - t} ms), ipList: ${JSON.stringify(ipList)}, ipCache:`, JSON.stringify(ipCache))
+
+      if (options.ipChecker) {
+        if (ip != null && ip !== hostname && options.ipChecker(ip)) {
+          return ip
+        }
+
+        for (const ip of ipList) {
+          if (ip !== hostname && options.ipChecker(ip)) {
+            return ip
+          }
+        }
+      }
+
+      return ip != null ? ip : hostname
     } catch (error) {
       log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] cannot resolve hostname ${hostname}, error:`, error)
       return hostname
     }
   }
 
-  async _lookupInternal (hostname, options = {}) {
-    // 获取当前域名的预设IP列表
-    let hostnamePreSetIpList = matchUtil.matchHostname(this.preSetIpList, hostname, `matched preSetIpList(${this.dnsName})`)
-    if (hostnamePreSetIpList && (hostnamePreSetIpList.length > 0 || hostnamePreSetIpList.length === undefined)) {
-      if (hostnamePreSetIpList.length > 0) {
-        hostnamePreSetIpList = hostnamePreSetIpList.slice()
-      } else {
-        hostnamePreSetIpList = mapToList(hostnamePreSetIpList)
-      }
-
-      if (hostnamePreSetIpList.length > 0) {
-        const result = []
-        for (const item of hostnamePreSetIpList) {
-          if (net.isIP(item)) {
-            // 如果是IP地址，直接使用
-            result.push(item)
-          } else {
-            // 如果是域名，进行DNS解析
-            try {
-              const resolved = await this._lookup(item, options)
-              if (resolved && resolved.length > 0) {
-                result.push(...resolved)
-              }
-            } catch (e) {
-              log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] 解析预设域名失败: ${item}`, e)
-            }
-          }
+  async _lookupWithPreSetIpList (hostname, options = {}) {
+    if (this.preSetIpList) {
+      // 获取当前域名的预设IP列表
+      let hostnamePreSetIpList = matchUtil.matchHostname(this.preSetIpList, hostname, `matched preSetIpList(${this.dnsName})`)
+      if (hostnamePreSetIpList && (hostnamePreSetIpList.length > 0 || hostnamePreSetIpList.length === undefined)) {
+        if (hostnamePreSetIpList.length > 0) {
+          hostnamePreSetIpList = hostnamePreSetIpList.slice() // 复制一份列表数据，避免配置数据被覆盖
+        } else {
+          hostnamePreSetIpList = mapToList(hostnamePreSetIpList)
         }
 
-        if (result.length > 0) {
-          result.isPreSet = true
-          log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 获取到该域名的预设IP列表： ${hostname} - ${JSON.stringify(result)}`)
-          return result
+        if (hostnamePreSetIpList.length > 0) {
+          hostnamePreSetIpList.isPreSet = true
+          log.info(`[DNS-over-PreSet '${this.dnsName}'] 获取到该域名的预设IP列表： ${hostname} - ${JSON.stringify(hostnamePreSetIpList)}`)
+          return hostnamePreSetIpList
         }
       }
     }
@@ -126,28 +178,83 @@ module.exports = class BaseDNS {
 
   async _lookup (hostname, options = {}) {
     const start = Date.now()
+
+    options.family = Number.parseInt(options.family) === 6 ? 6 : 4
+    const type = options.family === 6 ? 'AAAA' : 'A'
+
+    let response
     try {
-      const response = await this._doDnsQuery(hostname, options)
+      // 执行DNS查询
+      log.debug(`[DNS-over-${this.dnsType} '${this.dnsName}'] query start: ${hostname}`)
+      response = await this._doDnsQuery(hostname, type, start)
+    } catch {
+      // 异常日志在 _doDnsQuery已经打印过，这里就不再打印了
+      return []
+    }
+
+    try {
       const cost = Date.now() - start
+      log.debug(`[DNS-over-${this.dnsType} '${this.dnsName}'] query end: ${hostname}, cost: ${cost} ms, response:`, response)
+
       if (response == null || response.answers == null || response.answers.length == null || response.answers.length === 0) {
-        // 说明没有获取到ip
-        log.warn(`[DNS-over-${this.dnsType} '${this.dnsName}'] 没有该域名的IP地址: ${hostname}, cost: ${cost} ms, response:`, response)
+        log.warn(`[DNS-over-${this.dnsType} '${this.dnsName}'] 没有该域名的IPv${options.family}地址: ${hostname}, cost: ${cost} ms, response:`, response)
         return []
       }
 
-      // 根据查询类型过滤结果
-      const type = options.family === 6 ? 'AAAA' : 'A'
       const ret = response.answers.filter(item => item.type === type).map(item => item.data)
-      
       if (ret.length === 0) {
-        log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 没有该域名的IPv${options.family === 6 ? '6' : '4'}地址: ${hostname}, cost: ${cost} ms`)
+        log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 没有该域名的IPv${options.family}地址: ${hostname}, cost: ${cost} ms`)
       } else {
-        log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 获取到该域名的IPv${options.family === 6 ? '6' : '4'}地址： ${hostname} - ${JSON.stringify(ret)}, cost: ${cost} ms`)
+        log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] 获取到该域名的IPv${options.family}地址： ${hostname} - ${JSON.stringify(ret)}, cost: ${cost} ms`)
       }
+
       return ret
     } catch (e) {
-      log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] DNS query error, hostname: ${hostname}${this.dnsServer ? `, dnsServer: ${this.dnsServer}` : ''}, cost: ${Date.now() - start} ms, error:`, e)
+      log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] 解读响应失败，response:`, response, ', error:', e)
       return []
     }
+  }
+
+  _doDnsQuery (hostname, type = 'A', start) {
+    if (start == null) {
+      start = Date.now()
+    }
+
+    return new Promise((resolve, reject) => {
+      // 设置超时任务
+      let isOver = false
+      const timeout = 8000
+      const timeoutId = setTimeout(() => {
+        if (!isOver) {
+          isOver = true
+          log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] DNS查询超时, hostname: ${hostname}, sni: ${this.dnsServerName || '无'}, type: ${type}${this.dnsServer ? `, dnsServer: ${this.dnsServer}` : ''}${this.dnsServerPort ? `:${this.dnsServerPort}` : ''}, cost: ${Date.now() - start} ms`)
+          reject(new Error('DNS查询超时'))
+        }
+      }, timeout)
+
+      try {
+        this._dnsQueryPromise(hostname, type)
+          .then((response) => {
+            isOver = true
+            clearTimeout(timeoutId)
+            resolve(response)
+          })
+          .catch((e) => {
+            isOver = true
+            clearTimeout(timeoutId)
+            if (e.message === 'DNS查询超时') {
+              log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] DNS查询超时. hostname: ${hostname}, sni: ${this.dnsServerName || '无'}, type: ${type}${this.dnsServer ? `, dnsServer: ${this.dnsServer}` : ''}${this.dnsServerPort ? `:${this.dnsServerPort}` : ''}, cost: ${Date.now() - start} ms`)
+            } else {
+              log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] DNS查询错误, hostname: ${hostname}, sni: ${this.dnsServerName || '无'}, type: ${type}${this.dnsServer ? `, dnsServer: ${this.dnsServer}` : ''}${this.dnsServerPort ? `:${this.dnsServerPort}` : ''}, cost: ${Date.now() - start} ms, error:`, e)
+            }
+            reject(e)
+          })
+      } catch (e) {
+        isOver = true
+        clearTimeout(timeoutId)
+        log.error(`[DNS-over-${this.dnsType} '${this.dnsName}'] DNS查询异常, hostname: ${hostname}, type: ${type}${this.dnsServer ? `, dnsServer: ${this.dnsServer}` : ''}${this.dnsServerPort ? `:${this.dnsServerPort}` : ''}, cost: ${Date.now() - start} ms, error:`, e)
+        reject(e)
+      }
+    })
   }
 }

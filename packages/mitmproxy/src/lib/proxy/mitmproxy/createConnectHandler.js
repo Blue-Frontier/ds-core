@@ -1,9 +1,10 @@
 const net = require('node:net')
-const url = require('node:url')
+const URL = require('node:url')
 const jsonApi = require('../../../json')
 const log = require('../../../utils/util.log.server')
 const DnsUtil = require('../../dns')
 const dnsLookup = require('./dnsLookup')
+const trafficMonitor = require('../../traffic/TrafficMonitor')
 
 const localIP = '127.0.0.1'
 
@@ -31,8 +32,9 @@ module.exports = function createConnectHandler (sslConnectInterceptor, middlewar
   }
 
   return function connectHandler (req, cltSocket, head, ssl) {
+    const url = `${ssl ? 'https' : 'http'}://${req.url}`
     // eslint-disable-next-line node/no-deprecated-api
-    let { hostname, port } = url.parse(`${ssl ? 'https' : 'http'}://${req.url}`)
+    let { hostname, port } = URL.parse(url)
     port = Number.parseInt(port)
 
     if (isSslConnect(sslConnectInterceptors, req, cltSocket, head)) {
@@ -42,11 +44,14 @@ module.exports = function createConnectHandler (sslConnectInterceptor, middlewar
         connect(req, cltSocket, head, localIP, serverObj.port, null, false, hostname)
       }, (e) => {
         log.error(`----- fakeServer getServerPromise error: ${hostname}:${port}, error:`, e)
+        trafficMonitor.markConnectError(hostname)
       }).catch((e) => {
         log.error(`----- fakeServer getServerPromise error: ${hostname}:${port}, error:`, e)
+        trafficMonitor.markConnectError(hostname)
       })
     } else {
       log.info(`不拦截请求，直连目标服务器: ${hostname}:${port}, headers:`, jsonApi.stringify2(req.headers))
+      trafficMonitor.attachConnect(req, cltSocket)
       connect(req, cltSocket, head, hostname, port, dnsConfig, true)
     }
   }
@@ -55,17 +60,17 @@ module.exports = function createConnectHandler (sslConnectInterceptor, middlewar
 function connect (req, cltSocket, head, hostname, port, dnsConfig = null, isDirect = false, target = null) {
   // tunneling https
   // log.info('connect:', hostname, port)
-  const start = new Date()
+  const start = Date.now()
   const isDnsIntercept = {}
-  const hostport = `${hostname}:${port}`
+  let hostport = `${hostname}:${port}`
 
   // 用于记录日志
   const connectInfo = isDirect ? hostport : `fakeServer: ${hostport}, target: ${target}`
 
   try {
     // 客户端的连接事件监听
-    cltSocket.on('timeout', (e) => {
-      log.error(`cltSocket timeout: ${connectInfo}, errorMsg: ${e.message}`)
+    cltSocket.on('timeout', () => {
+      log.error(`cltSocket timeout: ${connectInfo}`)
     })
     cltSocket.on('error', (e) => {
       log.error(`cltSocket error:   ${connectInfo}, errorMsg: ${e.message}`)
@@ -112,9 +117,13 @@ function connect (req, cltSocket, head, hostname, port, dnsConfig = null, isDire
       connectTimeout: 10000,
     }
     if (dnsConfig && dnsConfig.dnsMap) {
-      const dns = DnsUtil.hasDnsLookup(dnsConfig, hostname)
-      if (dns) {
-        options.lookup = dnsLookup.createLookupFunc(null, dns, 'connect', hostport, isDnsIntercept)
+      const dnsAndFamily = DnsUtil.getDNSAndFamily(dnsConfig, hostname)
+      if (dnsAndFamily) {
+        options.lookup = dnsLookup.createLookupFunc(null, dnsAndFamily, 'connect', hostport, port, isDnsIntercept)
+        if (dnsAndFamily.family === 6) {
+          options.family = 6
+          hostport += '(IPv6)'
+        }
       }
     }
     // 代理连接事件监听
@@ -134,10 +143,14 @@ function connect (req, cltSocket, head, hostname, port, dnsConfig = null, isDire
       cltSocket.pipe(proxySocket)
     })
     proxySocket.on('timeout', () => {
-      const cost = new Date() - start
+      const cost = Date.now() - start
       const errorMsg = `${isDirect ? '直连' : '代理连接'}超时: ${hostport}, cost: ${cost} ms`
       log.error(errorMsg)
 
+      cltSocket.write('HTTP/1.1 408 Proxy connect timeout\r\n'
+        + 'Proxy-agent: dev-sidecar\r\n'
+        + '\r\n')
+      cltSocket.end()
       cltSocket.destroy()
 
       if (isDnsIntercept && isDnsIntercept.dns && isDnsIntercept.ip !== isDnsIntercept.hostname) {
@@ -148,10 +161,14 @@ function connect (req, cltSocket, head, hostname, port, dnsConfig = null, isDire
     })
     proxySocket.on('error', (e) => {
       // 连接失败，可能被GFW拦截，或者服务端拥挤
-      const cost = new Date() - start
+      const cost = Date.now() - start
       const errorMsg = `${isDirect ? '直连' : '代理连接'}失败: ${hostport}, cost: ${cost} ms, errorMsg: ${e.message}`
       log.error(`${errorMsg}\r\n`, e)
 
+      cltSocket.write(`HTTP/1.1 400 Proxy connect error: ${e.message}\r\n`
+        + 'Proxy-agent: dev-sidecar\r\n'
+        + '\r\n')
+      cltSocket.end()
       cltSocket.destroy()
 
       if (isDnsIntercept && isDnsIntercept.dns && isDnsIntercept.ip !== isDnsIntercept.hostname) {

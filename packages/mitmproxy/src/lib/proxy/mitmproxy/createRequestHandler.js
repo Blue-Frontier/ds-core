@@ -1,16 +1,91 @@
 const http = require('node:http')
 const https = require('node:https')
+const net = require('node:net')
 const jsonApi = require('../../../json')
 const log = require('../../../utils/util.log.server')
 const RequestCounter = require('../../choice/RequestCounter')
 const commonUtil = require('../common/util')
 // const upgradeHeader = /(^|,)\s*upgrade\s*($|,)/i
 const DnsUtil = require('../../dns')
+const { reportIPv6Error } = require('../../dns/base')
 const compatible = require('../compatible/compatible')
 const InsertScriptMiddleware = require('../middleware/InsertScriptMiddleware')
 const dnsLookup = require('./dnsLookup')
 
 const MAX_SLOW_TIME = 8000 // 超过此时间 则认为太慢了
+const MAX_RETRY_BODY_SIZE = 1024 * 1024 // 自动重试时最多缓存 1MB 请求体，超过则跳过重试
+const WWW_AUTH_HEADER_RE = /^www-authenticate$/i
+
+// 判断当前请求是否支持自动重试（方法可重试且请求体不超过上限）
+function canRetryWithBody (retryConfig, req) {
+  const method = (req.method || 'GET').toUpperCase()
+  if (!retryConfig.methods.includes(method)) {
+    return false
+  }
+
+  const contentLength = Number.parseInt(req.headers['content-length'], 10)
+  if (Number.isFinite(contentLength) && contentLength > MAX_RETRY_BODY_SIZE) {
+    return false
+  }
+
+  // chunked 请求体无法在重试时重新发送，跳过重试
+  if (req.headers['transfer-encoding']) {
+    return false
+  }
+
+  // Expect: 100-continue 时客户端会等待确认后才发送请求体，不适合缓存重试
+  if (req.headers.expect && req.headers.expect.toLowerCase().includes('100-continue')) {
+    return false
+  }
+
+  return true
+}
+
+// 缓存请求体，供自动重试时重新发送
+function bufferRequestBody (req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (chunk) => {
+      size += chunk.length
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      resolve(Buffer.concat(chunks, size))
+    })
+    req.on('error', reject)
+  })
+}
+
+// 日志用 rOptions 精简：agent 完整对象包含大量 socket/证书 Buffer，不能直接 JSON.stringify
+function compactROptions (rOptions) {
+  const agent = rOptions.agent
+  let agentInfo = agent === false ? false : null
+  if (agent && typeof agent === 'object') {
+    agentInfo = {
+      name: agent.constructor && agent.constructor.name,
+      keepAlive: agent.options && agent.options.keepAlive,
+      timeout: agent.options && agent.options.timeout,
+      rejectUnauthorized: agent.options && agent.options.rejectUnauthorized,
+      maxSockets: agent.maxSockets,
+    }
+  }
+
+  return {
+    protocol: rOptions.protocol,
+    method: rOptions.method,
+    hostname: rOptions.hostname,
+    port: rOptions.port,
+    path: rOptions.path,
+    servername: rOptions.servername,
+    family: rOptions.family,
+    host: rOptions.host,
+    headers: rOptions.headers,
+    agent: agentInfo,
+    maxHeaderSize: rOptions.maxHeaderSize,
+    customSocketId: rOptions.customSocketId,
+  }
+}
 
 // create requestHandler function
 module.exports = function createRequestHandler (createIntercepts, middlewares, externalProxy, dnsConfig, setting, compatibleConfig) {
@@ -22,11 +97,11 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
     let url = `${rOptions.method} ➜ ${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`
 
     if (rOptions.headers.connection === 'close') {
-      req.socket.setKeepAlive(false)
+      req.socket && req.socket.setKeepAlive(false)
     } else if (rOptions.customSocketId != null) { // for NTLM
-      req.socket.setKeepAlive(true, 60 * 60 * 1000)
+      req.socket && req.socket.setKeepAlive(true, 60 * 60 * 1000)
     } else {
-      req.socket.setKeepAlive(true, 30000)
+      req.socket && req.socket.setKeepAlive(true, 30000)
     }
     const context = {
       rOptions,
@@ -95,6 +170,24 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
 
     const proxyRequestPromise = async () => {
       rOptions.host = rOptions.hostname || rOptions.host || 'localhost'
+
+      // 配置了 retry 拦截器时，首次发送前缓存请求体，重试时可直接重新发送
+      if (context.retryConfig && context.retryBody == null) {
+        if (!canRetryWithBody(context.retryConfig, req)) {
+          log.warn(`retry 配置跳过：请求方法或请求体不支持自动重试, url: ${rOptions.method} ➜ ${rOptions.protocol}//${rOptions.hostname}${rOptions.path}`)
+          context.retryConfig = null
+        } else {
+          try {
+            context.retryBody = await bufferRequestBody(req)
+          } catch (e) {
+            log.error(`缓存请求体失败，本次请求不自动重试: ${url}, error:`, e)
+            context.retryConfig = null
+            context.retryBody = null
+            throw e
+          }
+        }
+      }
+
       return new Promise((resolve, reject) => {
         // use the binded socket for NTLM
         if (rOptions.agent && rOptions.customSocketId != null && rOptions.agent.getName) {
@@ -109,27 +202,45 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
 
         function onFree () {
           url = `${rOptions.method} ➜ ${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`
-          const start = new Date()
+          const start = Date.now()
           log.info('发起代理请求:', url, (rOptions.servername ? `, sni: ${rOptions.servername}` : ''), ', headers:', jsonApi.stringify2(rOptions.headers))
 
           const isDnsIntercept = {}
-          if (dnsConfig && dnsConfig.dnsMap) {
-            let dns = DnsUtil.hasDnsLookup(dnsConfig, rOptions.hostname)
-            if (!dns && rOptions.servername) {
-              dns = dnsConfig.dnsMap.quad9
+          let dnsHeaderLabel = null
+          if (rOptions.hostname && net.isIP(rOptions.hostname)) {
+            // 请求地址本身就是 IP 时，不会触发 DNS lookup，直接写入响应头
+            res.setHeader('DS-DNS', `host: ${rOptions.hostname}`)
+          } else if (dnsConfig && dnsConfig.dnsMap) {
+            let dnsAndFamily = DnsUtil.getDNSAndFamily(dnsConfig, rOptions.hostname)
+            if (!dnsAndFamily && rOptions.servername) {
+              const dns = dnsConfig.dnsMap.ForSNI
               if (dns) {
-                log.info(`域名 ${rOptions.hostname} 在dns中未配置，但使用了 sni: ${rOptions.servername}, 必须使用dns，现默认使用 'quad9' DNS.`)
+                dnsAndFamily = { dns }
+                log.info(`域名 ${rOptions.hostname} 在dns中未配置，但使用了 sni: ${rOptions.servername}, 必须使用dns，现默认使用 '${dnsAndFamily.dnsName}' DNS.`)
+              } else {
+                log.warn(`域名 ${rOptions.hostname} 在dns中未配置，但使用了 sni: ${rOptions.servername}，然而DNS服务管理中，并未指定SNI默认使用的DNS。`)
               }
             }
-            if (dns) {
-              rOptions.lookup = dnsLookup.createLookupFunc(res, dns, 'request url', url, isDnsIntercept)
-              log.debug(`域名 ${rOptions.hostname} DNS: ${dns.dnsName}`)
-              res.setHeader('DS-DNS', dns.dnsName)
+            if (dnsAndFamily) {
+              rOptions.lookup = dnsLookup.createLookupFunc(res, dnsAndFamily, 'request url', url, rOptions.port, isDnsIntercept)
+              if (dnsAndFamily.family === 6) {
+                rOptions.family = 6
+              }
+              log.debug(`域名 ${rOptions.hostname} DNS: ${dnsAndFamily.dns.dnsName}, family: ${rOptions.family || 4}`)
+              dnsHeaderLabel = dnsAndFamily.dns.dnsName === '预设IP' ? 'PreSet' : dnsAndFamily.dns.dnsName.replace(/[^\x20-\x7E]/g, '')
+              res.setHeader('DS-DNS', dnsHeaderLabel)
             } else {
-              log.info(`域名 ${rOptions.hostname} 在DNS中未配置`)
+              // 未配置自定义 DNS，使用系统默认 DNS，并捕获 IP 写入响应头
+              rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url)
+              dnsHeaderLabel = 'default'
+              res.setHeader('DS-DNS', dnsHeaderLabel)
+              log.info(`域名 ${rOptions.hostname} 在DNS中未配置，使用系统默认DNS`)
             }
           } else {
-            log.info(`域名 ${rOptions.hostname} DNS配置不存在`)
+            rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url)
+            dnsHeaderLabel = 'default'
+            res.setHeader('DS-DNS', dnsHeaderLabel)
+            log.info(`域名 ${rOptions.hostname} DNS配置不存在，使用系统默认DNS`)
           }
 
           // rOptions.sigalgs = 'RSA-PSS+SHA256:RSA-PSS+SHA512:ECDSA+SHA256'
@@ -139,7 +250,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           // log.debug('rOptions:', rOptions.hostname + rOptions.path, '\r\n', rOptions)
           // log.debug('agent:', rOptions.agent)
           // log.debug('agent.options:', rOptions.agent.options)
-          res.setHeader('DS-Proxy-Request', rOptions.hostname)
+          res.setHeader('DS-Proxy-Request', `${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path || req.url}`)
 
           // 自动兼容程序：2
           if (rOptions.agent) {
@@ -153,12 +264,18 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             }
           }
 
+          res.setHeader('DS-Proxy-Request-Family', rOptions.family || 4)
           proxyReq = (rOptions.protocol === 'https:' ? https : http).request(rOptions, (proxyRes) => {
-            const cost = new Date() - start
+            const cost = Date.now() - start
             if (rOptions.protocol === 'https:') {
               log.info(`代理请求返回: 【${proxyRes.statusCode}】${url}, cost: ${cost} ms`)
             } else {
               log.info(`请求返回: 【${proxyRes.statusCode}】${url}, cost: ${cost} ms`)
+            }
+
+            // 按需探测反馈：IP 连接成功
+            if (isDnsIntercept && isDnsIntercept.tester) {
+              isDnsIntercept.tester.reportProbeResult(isDnsIntercept.ip, true)
             }
             // log.info('request:', proxyReq, proxyReq.socket)
 
@@ -170,21 +287,82 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           })
 
           // 代理请求的事件监听
+          // 连接超时定时器：OS 级 TCP 超时 15-21 秒太慢，7 秒内未建立连接则判定 IP 不通
+          let connectionTimer = setTimeout(() => {
+            if (isDnsIntercept && isDnsIntercept.tester && isDnsIntercept.ip) {
+              isDnsIntercept.tester.reportProbeResult(isDnsIntercept.ip, false)
+            }
+            const cost = Date.now() - start
+            const errorMsg = `连接超时: ${url}, cost: ${cost} ms`
+            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
+            countSlow(isDnsIntercept, `连接超时, cost: ${cost} ms`)
+            const error = new Error(errorMsg)
+            error.retryable = true
+            proxyReq.destroy(error)
+          }, 7000)
+          proxyReq.once('socket', (socket) => {
+            const updateDsDnsFromSocket = () => {
+              if (res && !res.headersSent && dnsHeaderLabel && socket.remoteAddress) {
+                let family = socket.remoteFamily
+                if (family === 'IPv4') {
+                  family = 4
+                } else if (family === 'IPv6') {
+                  family = 6
+                } else {
+                  family = net.isIP(socket.remoteAddress) === 6 ? 6 : 4
+                }
+                res.setHeader('DS-DNS', `${dnsHeaderLabel}: ${socket.remoteAddress} (IPv${family})`)
+              }
+            }
+            // keep-alive 复用 socket 时不会触发 lookup/connect，remoteAddress 已存在；
+            // 新 socket 则等 connect 事件后再写入。
+            updateDsDnsFromSocket()
+            if (socket.connecting) {
+              socket.once('connect', () => {
+                clearTimeout(connectionTimer)
+                connectionTimer = null
+                updateDsDnsFromSocket()
+              })
+            } else {
+              // 复用 keep-alive socket 时不会再有 connect 事件，必须立刻清除连接计时器，
+              // 否则 7 秒后计时器会把已经成功的请求误判为连接超时并销毁复用 socket
+              clearTimeout(connectionTimer)
+              connectionTimer = null
+            }
+          })
+
           proxyReq.on('timeout', () => {
-            const cost = new Date() - start
+            if (connectionTimer) {
+              clearTimeout(connectionTimer)
+              connectionTimer = null
+            }
+            const cost = Date.now() - start
             const errorMsg = `代理请求超时: ${url}, cost: ${cost} ms`
-            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(rOptions))
+            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
             countSlow(isDnsIntercept, `代理请求超时, cost: ${cost} ms`)
             proxyReq.end()
             proxyReq.destroy()
             const error = new Error(errorMsg)
+            error.code = 'ETIMEOUT'
             error.status = 408
+            error.retryable = true
             reject(error)
           })
           proxyReq.on('error', (e) => {
-            const cost = new Date() - start
-            log.error(`代理请求错误: ${url}, cost: ${cost} ms, error:`, e, ', rOptions:', jsonApi.stringify2(rOptions))
+            if (connectionTimer) {
+              clearTimeout(connectionTimer)
+              connectionTimer = null
+            }
+            if (isDnsIntercept && isDnsIntercept.tester && isDnsIntercept.ip) {
+              isDnsIntercept.tester.reportProbeResult(isDnsIntercept.ip, false)
+            }
+            const cost = Date.now() - start
+            log.error(`代理请求错误: ${url}, cost: ${cost} ms, error:`, e, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
             countSlow(isDnsIntercept, `代理请求错误: ${e.message}`)
+            if (e.code === 'ENETUNREACH' && isDnsIntercept && isDnsIntercept.ip) {
+              reportIPv6Error(isDnsIntercept.ip)
+            }
+            e.retryable = true
             reject(e)
 
             // 自动兼容程序：2
@@ -193,9 +371,9 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             }
           })
           proxyReq.on('aborted', () => {
-            const cost = new Date() - start
+            const cost = Date.now() - start
             const errorMsg = `代理请求被取消: ${url}, cost: ${cost} ms`
-            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(rOptions))
+            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
 
             if (cost > MAX_SLOW_TIME) {
               countSlow(isDnsIntercept, `代理请求被取消，且请求太慢, cost: ${cost} ms > ${MAX_SLOW_TIME} ms`)
@@ -207,29 +385,45 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             reject(new Error(errorMsg))
           })
 
+          // 设置代理请求超时（避免请求无限挂起）
+          // agent.options.timeout 是连接池空闲超时（20s），不适合直接用作请求超时。
+          // request timeout 是 socket 空闲超时：socket 上多久无数据即判定超时。
+          // 部分站点响应慢（如 Google Cloud），默认 60 秒，最小 10 秒。
+          const agentTimeout = (rOptions.agent && rOptions.agent.options && rOptions.agent.options.timeout) || 30000
+          const reqTimeout = Math.max(agentTimeout * 2, 10000)
+          proxyReq.setTimeout(reqTimeout)
+
           // 原始请求的事件监听
           req.on('aborted', () => {
-            const cost = new Date() - start
+            const cost = Date.now() - start
             const errorMsg = `请求被取消: ${url}, cost: ${cost} ms`
-            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(rOptions))
-            proxyReq.abort()
+            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
+            proxyReq.destroy()
             if (res.writableEnded) {
               return
             }
             reject(new Error(errorMsg))
           })
-          req.on('error', (e, req, res) => {
-            const cost = new Date() - start
-            log.error(`请求错误: ${url}, cost: ${cost} ms, error:`, e, ', rOptions:', jsonApi.stringify2(rOptions))
+          req.on('error', (e) => {
+            const cost = Date.now() - start
+            log.error(`请求错误: ${url}, cost: ${cost} ms, error:`, e, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
             reject(e)
           })
           req.on('timeout', () => {
-            const cost = new Date() - start
+            const cost = Date.now() - start
             const errorMsg = `请求超时: ${url}, cost: ${cost} ms`
-            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(rOptions))
+            log.error(errorMsg, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
             reject(new Error(errorMsg))
           })
-          req.pipe(proxyReq)
+          if (context.retryBody != null) {
+            // 已缓存请求体（用于自动重试），直接写入
+            if (context.retryBody.length > 0) {
+              proxyReq.write(context.retryBody)
+            }
+            proxyReq.end()
+          } else {
+            req.pipe(proxyReq)
+          }
         }
       })
     }
@@ -243,7 +437,36 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
         return false
       }
 
-      const proxyRes = await proxyRequestPromise()
+      const retryConfig = context.retryConfig
+      let retryCount = 0
+      let proxyRes
+      while (true) {
+        try {
+          proxyRes = await proxyRequestPromise()
+        } catch (e) {
+          // 连接失败（连接超时、连接重置等）时也会重试；这些错误原本会由下方 catch 包装成 500 页面返回给浏览器
+          if (retryConfig && retryCount < retryConfig.times && e && e.retryable) {
+            retryCount++
+            context.retryCount = retryCount
+            res.setHeader('DS-Retry', String(retryCount))
+            log.warn(`请求失败，自动重试 (${retryCount}/${retryConfig.times}): ${url}, error: ${e.code || e.message}`)
+            continue
+          }
+          throw e
+        }
+
+        // 收到配置的状态码（默认 500）时自动重试
+        if (retryConfig && retryCount < retryConfig.times && retryConfig.statuses.includes(proxyRes.statusCode)) {
+          retryCount++
+          context.retryCount = retryCount
+          res.setHeader('DS-Retry', String(retryCount))
+          log.warn(`收到 ${proxyRes.statusCode} 响应，自动重试 (${retryCount}/${retryConfig.times}): ${url}`)
+          proxyRes.on('error', () => {})
+          proxyRes.resume()
+          continue
+        }
+        break
+      }
 
       // proxyRes.on('data', (chunk) => {
       //   // log.info('BODY: ')
@@ -303,14 +526,19 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
       await responseInterceptorPromise
 
       if (!res.headersSent) { // prevent duplicate set headers
+        // HTTP/2 禁止头，上游服务器可能返回，直传会导致 http2 模块抛异常
+        const HTTP2_FORBIDDEN = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'http2-settings'])
         Object.keys(proxyRes.headers).forEach((key) => {
           if (proxyRes.headers[key] !== undefined) {
             // https://github.com/nodejitsu/node-http-proxy/issues/362
-            if (/^www-authenticate$/i.test(key)) {
+            if (WWW_AUTH_HEADER_RE.test(key)) {
               if (proxyRes.headers[key]) {
                 proxyRes.headers[key] = proxyRes.headers[key] && proxyRes.headers[key].split(',')
               }
               key = 'www-authenticate'
+            }
+            if (HTTP2_FORBIDDEN.has(key)) {
+              return
             }
             res.setHeader(key, proxyRes.headers[key])
           }
@@ -326,18 +554,49 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
       if (!res.writableEnded) {
         try {
           const status = e.status || 500
-          res.writeHead(status, { 'Content-Type': 'text/html;charset=UTF8' })
-          res.write(`DevSidecar Error:<br/>
-目标网站请求错误：【${e.code}】 ${e.message}<br/>
-目标地址：${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`,
-          )
-        } catch (e) {
+
+          // 浏览器导航（document/iframe）才返回 HTML 错误页；
+          // 图片/脚本等 no-cors 子资源返回 text/plain，避免被 Chromium ORB 拦截成 ERR_BLOCKED_BY_ORB
+          const accept = req.headers.accept || ''
+          const secFetchDest = req.headers['sec-fetch-dest'] || ''
+          const acceptsHtml = accept.includes('text/html') || secFetchDest === 'document' || secFetchDest === 'iframe'
+          const headers = { 'Content-Type': acceptsHtml ? 'text/html;charset=UTF8' : 'text/plain; charset=utf-8' }
+
+          // headers.Access-Control-Allow-*：避免跨域问题
+          if (rOptions.headers.origin) {
+            headers['Access-Control-Allow-Credentials'] = 'true'
+            headers['Access-Control-Allow-Origin'] = rOptions.headers.origin
+            headers.Vary = 'Origin'
+          }
+
+          res.writeHead(status, headers)
+          const errorMsg = `目标网站请求错误：【${e.code || (e.status || 'UNKNOWN')}】 ${e.message}`
+          const retryInfo = context.retryCount > 0 ? `自动重试：已尝试 ${context.retryCount} 次` : ''
+          const target = `目标地址：${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`
+
+          if (acceptsHtml) {
+            res.write(`<style>
+              p {
+                margin: 10px 0;
+                color: white;
+                background-color: black;
+              }
+            </style>
+            <p>DevSidecar Error:</p>
+            <p>${errorMsg}</p>
+            ${retryInfo ? `<p>${retryInfo}</p>` : ''}
+            <p>${target}</p>`,
+            )
+          } else {
+            res.write(`DevSidecar Error:\n${errorMsg}\n${retryInfo ? `${retryInfo}\n` : ''}${target}`)
+          }
+        } catch {
           // do nothing
         }
 
         try {
           res.end()
-        } catch (e) {
+        } catch {
           // do nothing
         }
 

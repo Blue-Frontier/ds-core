@@ -1,6 +1,8 @@
 const mitmproxy = require('./lib/proxy')
 const proxyConfig = require('./lib/proxy/common/config')
 const speedTest = require('./lib/speed/index.js')
+const trafficMonitor = require('./lib/traffic/TrafficMonitor')
+const cloudflareRoute = require('./lib/cloudflareRoute')
 const ProxyOptions = require('./options')
 const log = require('./utils/util.log.server')
 const { fireError, fireStatus } = require('./utils/util.process')
@@ -23,6 +25,7 @@ const api = {
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
     }
     // log.info('启动代理服务时的配置:', JSON.stringify(proxyOptions, null, '\t'))
+    cloudflareRoute.init(config)
     const newServers = mitmproxy.createProxy(proxyOptions, (server, port, host, ssl) => {
       fireStatus(true)
       log.info(`代理服务已启动：${host}:${port}, ssl: ${ssl}`)
@@ -48,11 +51,13 @@ const api = {
     registerProcessListener()
   },
   async close () {
+    trafficMonitor.stop()
+    cloudflareRoute.stop()
     return new Promise((resolve, reject) => {
       if (servers && servers.length > 0) {
         for (const server of servers) {
           server.close((err) => {
-            if (err && err.code !== 'ERR_SERVER_NOT_RUNNING') {
+            if (err) {
               if (err.code === 'ERR_SERVER_NOT_RUNNING') {
                 log.info('代理服务未运行，无需关闭')
                 resolve()

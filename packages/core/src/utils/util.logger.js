@@ -7,6 +7,19 @@ const configFromFiles = defaultConfig.configFromFiles
 // 日志级别
 const level = process.env.NODE_ENV === 'development' ? 'debug' : 'info'
 
+// 是否完全禁用日志：不输出 stdout，也不写日志文件
+const logDisabled = process.env.DEV_SIDECAR_LOG_DISABLED === 'true'
+
+// 是否同时输出到 stdout。默认开启（GUI/开发调试需要），CLI 守护进程通过环境变量关闭
+const logToConsole = !logDisabled && process.env.DEV_SIDECAR_LOG_TO_CONSOLE !== 'false'
+
+function createNoopLogger () {
+  const noop = () => {}
+  return { debug: noop, info: noop, warn: noop, error: noop, level: 'off', category: 'noop' }
+}
+
+const noopLogger = logDisabled ? createNoopLogger() : null
+
 function getDefaultConfigBasePath () {
   if (configFromFiles.app.logFileSavePath) {
     let logFileSavePath = configFromFiles.app.logFileSavePath
@@ -37,23 +50,26 @@ let log = null
 
 // 设置一组日志配置
 function log4jsConfigure (categories) {
+  if (logDisabled) {
+    return
+  }
+
   if (log != null) {
     log.error('当前进程已经设置过日志配置，无法再设置更多日志配置:', categories)
     return
   }
 
   const config = {
-    appenders: {
-      std: { type: 'stdout' },
-    },
+    appenders: logToConsole ? { std: { type: 'stdout' } } : {},
     categories: {
-      default: { appenders: ['std'], level },
+      // default 分类至少需要挂一个 appender（log4js 校验要求），没有 std 时复用第一个文件 appender
+      default: { appenders: logToConsole ? ['std'] : [categories[0]], level },
     },
   }
 
   for (const category of categories) {
     config.appenders[category] = { ...appenderConfig, filename: path.join(basePath, `/${category}.log`) }
-    config.categories[category] = { appenders: [category, 'std'], level }
+    config.categories[category] = { appenders: logToConsole ? [category, 'std'] : [category], level }
   }
 
   log4js.configure(config)
@@ -67,6 +83,10 @@ function log4jsConfigure (categories) {
 
 module.exports = {
   getLogger (category) {
+    if (logDisabled) {
+      return noopLogger
+    }
+
     if (!category) {
       if (log) {
         log.error('未指定日志类型，无法配置并获取日志对象！！！')

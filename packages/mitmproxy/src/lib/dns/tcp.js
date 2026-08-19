@@ -7,14 +7,13 @@ const BaseDNS = require('./base')
 const defaultPort = 53 // TCP类型的DNS服务默认端口号
 
 module.exports = class DNSOverTCP extends BaseDNS {
-  constructor (dnsName, cacheSize, preSetIpList, dnsServer, dnsServerPort) {
-    super(dnsName, 'TCP', cacheSize, preSetIpList)
-    this.dnsServer = dnsServer
+  constructor (dnsName, cacheSize, preSetIpList, dnsServer, dnsServerPort, dnsFamily) {
+    super(dnsServer.replace(/\s+/, ''), dnsFamily, dnsName, 'TCP', cacheSize, preSetIpList)
     this.dnsServerPort = Number.parseInt(dnsServerPort) || defaultPort
     this.isIPv6 = dnsServer.includes(':') && dnsServer.includes('[') && dnsServer.includes(']')
   }
 
-  _doDnsQuery (hostname, options = {}) {
+  _dnsQueryPromise (hostname, type = 'A') {
     return new Promise((resolve, reject) => {
       // 构造 DNS 查询报文
       const packet = dnsPacket.encode({
@@ -22,7 +21,7 @@ module.exports = class DNSOverTCP extends BaseDNS {
         type: 'query',
         id: randi(0x0, 0xFFFF),
         questions: [{
-          type: options.family === 6 ? 'AAAA' : 'A',
+          type,
           name: hostname,
         }],
       })
@@ -31,7 +30,7 @@ module.exports = class DNSOverTCP extends BaseDNS {
       const tcpClient = net.createConnection({
         host: this.dnsServer,
         port: this.dnsServerPort,
-        family: this.isIPv6 ? 6 : 4
+        family: this.dnsFamily,
       }, () => {
         // TCP DNS 报文前需添加 2 字节长度头
         const lengthBuffer = Buffer.alloc(2)

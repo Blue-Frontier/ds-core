@@ -3,7 +3,7 @@ const defaultAllowMethods = 'GET,POST,PUT,DELETE,HEAD,OPTIONS,PATCH' // CONNECT�
 
 function readConfig (config, defaultConfig) {
   if (config) {
-    if (Object.isArray(config)) {
+    if (Array.isArray(config)) {
       config = config.join(',')
     }
   } else {
@@ -19,7 +19,7 @@ module.exports = {
     const { rOptions, log } = context
 
     // 不是 OPTIONS 请求，或请求头中不含 origin 时，跳过当前拦截器
-    if (rOptions.method !== 'OPTIONS' || rOptions.headers.origin == null) {
+    if (rOptions.method !== 'OPTIONS' || !rOptions.headers.origin) {
       return
     }
 
@@ -35,6 +35,8 @@ module.exports = {
       'Access-Control-Allow-Methods': allowMethods,
       'Access-Control-Max-Age': interceptOpt.optionsMaxAge > 0 ? interceptOpt.optionsMaxAge : 2592000, // 默认有效一个月
       'Date': new Date().toUTCString(),
+      // 当 Access-Control-Allow-Origin 是特定值时，应设置 Vary: Origin
+      'Vary': 'Origin',
     }
 
     // 判断是否允许

@@ -1,3 +1,5 @@
+const cacheRes = require('../res/cacheResponse')
+
 module.exports = {
   name: 'success',
   priority: 102,
@@ -5,10 +7,21 @@ module.exports = {
     const { rOptions, log } = context
 
     if (interceptOpt.success === true || interceptOpt.success === 'true') {
-      res.writeHead(200, {
+      const headers = {
         'Content-Type': 'text/plain; charset=utf-8',
         'DS-Interceptor': 'success',
-      })
+      }
+
+      // headers.Access-Control-Allow-*：避免跨域问题
+      if (rOptions.headers.origin) {
+        headers['Access-Control-Allow-Credentials'] = 'true'
+        headers['Access-Control-Allow-Origin'] = rOptions.headers.origin
+      }
+
+      // 同时使用缓存（如果配置了的话）
+      cacheRes.simpleHandle(interceptOpt, res)
+
+      res.writeHead(200, headers)
       res.write(
         'DevSidecar 200: Request success.\n\n'
         + '  This request is matched by success intercept.\n\n'
@@ -24,7 +37,6 @@ module.exports = {
 
       // status
       const status = response.status || 200
-      response.status = status
 
       // body
       const body = response.html || response.json || response.script || response.css || response.text || response.body
@@ -32,9 +44,8 @@ module.exports = {
         + '  This request is matched by success intercept.\n\n'
         + `  因配置success拦截器，本请求直接返回${status}成功。`
 
-      // headers
-      const headers = response.headers || {}
-      response.headers = headers
+      // headers：浅拷贝配置中的 headers，避免将 origin 等请求级数据写入共享的拦截器配置对象
+      const headers = { ...(response.headers || {}) }
       headers['DS-Interceptor'] = 'success'
       // headers.Content-Type
       if (status !== 204) {
@@ -62,6 +73,9 @@ module.exports = {
         headers['Access-Control-Allow-Credentials'] = 'true'
         headers['Access-Control-Allow-Origin'] = rOptions.headers.origin
       }
+
+      // 同时使用缓存（如果配置了的话）
+      cacheRes.simpleHandle(interceptOpt, res)
 
       res.writeHead(status, headers)
       if (status !== 204) {

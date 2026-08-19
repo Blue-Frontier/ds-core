@@ -1,31 +1,45 @@
-const url = require('node:url')
-const lodash = require('lodash')
+const URL = require('node:url')
+
+const PLACEHOLDER_RE = /\$\{[^}]+\}/g
+
+function replacePlaceholder0 (url, matched, pre) {
+  if (matched) {
+    for (let i = 0; i < matched.length; i++) {
+      url = url.replace(`\${${pre}[${i}]}`, matched[i] || '')
+    }
+    if (matched.groups) {
+      for (const key in matched.groups) {
+        url = url.replace(`\${${key}}`, matched.groups[key] || '')
+      }
+    }
+  }
+  return url
+}
 
 // 替换占位符
-function replacePlaceholder (url, rOptions, matched) {
+function replacePlaceholder (url, rOptions, pathMatched, hostnameMatched) {
   if (url.includes('${')) {
     // eslint-disable-next-line no-template-curly-in-string
     url = url.replace('${host}', rOptions.hostname)
 
-    if (matched && url.includes('${')) {
-      for (let i = 0; i < matched.length; i++) {
-        url = url.replace(`\${m[${i}]}`, matched[i] == null ? '' : matched[i])
-      }
+    if (url.includes('${')) {
+      url = replacePlaceholder0(url, pathMatched, 'p')
+      url = replacePlaceholder0(url, hostnameMatched, 'h')
     }
 
     // 移除多余的占位符
     if (url.includes('${')) {
-      url = url.replace(/\$\{[^}]+\}/g, '')
+      url = url.replace(PLACEHOLDER_RE, '')
     }
   }
 
   return url
 }
 
-function buildTargetUrl (rOptions, urlConf, interceptOpt, matched) {
+function buildTargetUrl (rOptions, urlConf, interceptOpt, matched, hostnameMatched) {
   let targetUrl
   if (interceptOpt && interceptOpt.replace) {
-    const regexp = new RegExp(interceptOpt.replace)
+    const regexp = interceptOpt.compiledRegexp || (interceptOpt.compiledRegexp = new RegExp(interceptOpt.replace))
     targetUrl = rOptions.path.replace(regexp, urlConf)
   } else if (urlConf.indexOf('http:') === 0 || urlConf.indexOf('https:') === 0) {
     targetUrl = urlConf
@@ -33,14 +47,14 @@ function buildTargetUrl (rOptions, urlConf, interceptOpt, matched) {
     let uri = rOptions.path
     if (uri.indexOf('http:') === 0 || uri.indexOf('https:') === 0) {
       // eslint-disable-next-line node/no-deprecated-api
-      const URL = url.parse(uri)
-      uri = URL.path
+      const urlObj = URL.parse(uri)
+      uri = urlObj.path
     }
     targetUrl = urlConf + uri
   }
 
   // 替换占位符
-  targetUrl = replacePlaceholder(targetUrl, rOptions, matched)
+  targetUrl = replacePlaceholder(targetUrl, rOptions, matched, hostnameMatched)
 
   // 拼接协议
   targetUrl = targetUrl.indexOf('http:') === 0 || targetUrl.indexOf('https:') === 0 ? targetUrl : `${rOptions.protocol}//${targetUrl}`
@@ -48,22 +62,26 @@ function buildTargetUrl (rOptions, urlConf, interceptOpt, matched) {
   return targetUrl
 }
 
-function doProxy (proxyConf, rOptions, req, interceptOpt, matched) {
+function doProxy (proxyConf, rOptions, req, interceptOpt, matched, hostnameMatched) {
   // 获取代理目标地址
-  const proxyTarget = buildTargetUrl(rOptions, proxyConf, interceptOpt, matched)
+  const proxyTarget = buildTargetUrl(rOptions, proxyConf, interceptOpt, matched, hostnameMatched)
 
   // 替换rOptions的属性
   // eslint-disable-next-line node/no-deprecated-api
-  const URL = url.parse(proxyTarget)
-  rOptions.origional = lodash.cloneDeep(rOptions) // 备份原始请求参数
-  delete rOptions.origional.agent
-  delete rOptions.origional.headers
-  rOptions.protocol = URL.protocol
-  rOptions.hostname = URL.host
-  rOptions.host = URL.host
-  rOptions.headers.host = URL.host
-  rOptions.path = URL.path
-  if (URL.port == null) {
+  const urlObj = URL.parse(proxyTarget)
+
+  // 备份原始请求参数，不包含 agent 和 headers（agent 是共享单例，headers 在代理转发时会被改写）
+  const { agent: _agent, headers: _headers, ...original } = rOptions
+  rOptions.original = original
+
+  rOptions.protocol = urlObj.protocol
+  rOptions.hostname = urlObj.hostname
+  rOptions.host = urlObj.host
+  rOptions.headers.host = urlObj.host
+  rOptions.path = urlObj.path
+  if (urlObj.port) {
+    rOptions.port = Number.parseInt(urlObj.port)
+  } else {
     rOptions.port = rOptions.protocol === 'https:' ? 443 : 80
   }
 
@@ -76,7 +94,7 @@ module.exports = {
   replacePlaceholder,
   buildTargetUrl,
   doProxy,
-  requestIntercept (context, interceptOpt, req, res, ssl, next, matched) {
+  requestIntercept (context, interceptOpt, req, res, ssl, next, matched, hostnameMatched) {
     const { rOptions, log, RequestCounter } = context
 
     const originHostname = rOptions.hostname
@@ -107,17 +125,17 @@ module.exports = {
     }
 
     // 替换 rOptions 中的地址，并返回代理目标地址
-    const proxyTarget = doProxy(proxyConf, rOptions, req, interceptOpt, matched)
+    const proxyTarget = doProxy(proxyConf, rOptions, req, interceptOpt, matched, hostnameMatched)
 
     if (context.requestCount) {
       log.info('proxy choice:', JSON.stringify(context.requestCount))
     }
 
     if (interceptOpt.sni) {
-      let unVerifySsl = rOptions.agent.options.rejectUnauthorized === false
+      let unVerifySsl = rOptions.agent && rOptions.agent.options.rejectUnauthorized === false
 
       rOptions.servername = interceptOpt.sni
-      if (rOptions.agent.options.rejectUnauthorized && rOptions.agent.unVerifySslAgent) {
+      if (rOptions.agent && rOptions.agent.options.rejectUnauthorized && rOptions.agent.unVerifySslAgent) {
         // rOptions.agent.options.rejectUnauthorized = false // 不能直接在agent上进行修改属性值，因为它采用了单例模式，所有请求共用这个对象的
         rOptions.agent = rOptions.agent.unVerifySslAgent
         unVerifySsl = true
@@ -127,7 +145,7 @@ module.exports = {
       res.setHeader('DS-Interceptor', `proxy: ${proxyTarget}, sni: ${interceptOpt.sni}${unVerifySslStr}`)
       log.info(`proxy intercept: hostname: ${originHostname}, target: ${proxyTarget}, sni replace servername: ${rOptions.servername}${unVerifySslStr}`)
     } else if (interceptOpt.unVerifySsl === true) {
-      if (rOptions.agent.options.rejectUnauthorized && rOptions.agent.unVerifySslAgent) {
+      if (rOptions.agent && rOptions.agent.options.rejectUnauthorized && rOptions.agent.unVerifySslAgent) {
         rOptions.agent = rOptions.agent.unVerifySslAgent
         res.setHeader('DS-Interceptor', `proxy: ${proxyTarget}, unVerifySsl`)
         log.info(`proxy intercept: hostname: ${originHostname}, target: ${proxyTarget}, unVerifySsl`)

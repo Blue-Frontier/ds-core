@@ -1,4 +1,4 @@
-const LRUCache = require('lru-cache')
+const { LRUCache } = require('lru-cache')
 const log = require('../../utils/util.log.server')
 
 const cacheSize = 1024
@@ -61,7 +61,7 @@ class DynamicChoice {
    * @param newBackupList 新的backupList
    */
   setBackupList (newBackupList) {
-    this.backupList = newBackupList
+    this.backupList = [...newBackupList]
     let defaultTotal = newBackupList.length
     for (const ip of newBackupList) {
       if (!this.countMap[ip]) {
@@ -69,7 +69,7 @@ class DynamicChoice {
         defaultTotal--
       }
     }
-    this.value = newBackupList.shift()
+    this.value = this.backupList.shift()
     this.doCount(this.value, false)
   }
 
@@ -109,22 +109,23 @@ class DynamicChoice {
     }
 
     if (isError) {
-      // 失败次数+1，累计连续失败次数+1
-      count.error++
-      count.keepErrorCount++
+      count.error++ // 失败次数+1
+      count.keepErrorCount++ // 连续失败次数+1
     } else {
-      // 总次数+1
-      count.total++
+      count.keepErrorCount = 0 // 成功后重置连续失败计数
     }
+    count.total++ // 总次数+1
+
     // 计算成功率
     count.successRate = 1.0 - (count.error / count.total)
+
+    // 判断是否需要切换下一个
     if (isError && this.value === ip) {
-      // 连续错误3次，切换下一个
-      if (count.keepErrorCount >= 3) {
+      // 连续失败 1 次就切：坏 IP 不值得等 3 次 × 15s = 45s
+      if (count.keepErrorCount >= 1) {
         this.changeNext(count)
-      }
-      // 成功率小于40%,切换下一个
-      if (count.successRate < 0.4) {
+      } else if (count.successRate < 0.4) {
+        // 成功率小于40%,切换下一个
         this.changeNext(count)
       }
     }
