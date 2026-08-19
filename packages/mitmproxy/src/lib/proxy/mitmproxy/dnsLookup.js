@@ -205,31 +205,41 @@ module.exports = {
 
     return (hostname, options, callback) => {
       defaultDns.lookup(hostname, options, (err, address, family) => {
-        if (!err) {
-          markBlockedIfAllZero(hostname, address)
-          if (Array.isArray(address)) {
-            address = address.map((item) => {
-              const newIp = rewriteCloudflareIp(hostname, item.address)
-              return { address: newIp, family: getAddressFamily(newIp) }
-            })
-          } else {
-            address = rewriteCloudflareIp(hostname, address)
-            family = getAddressFamily(address)
-          }
-          const first = Array.isArray(address) ? address[0] : { address, family }
-          const ip = first && first.address
-          const fam = first && first.family
-          if (ip && isValidIpAddress(ip)) {
-            log.info(`----- ${action}: ${hostname}, use default DNS: ${ip}(family: ${fam})${target} -----`)
-            if (res) {
-              res.setHeader('DS-DNS', `default: ${ip} (IPv${fam})`)
-            }
-          }
-          callback(null, ip, family)
-        } else {
+        if (err) {
           log.error(`----- ${action}: ${hostname}, default dns lookup error${target}, error:`, err)
+          callback(err, address, family)
+          return
         }
-        callback(err, address, family)
+        markBlockedIfAllZero(hostname, address)
+        if (Array.isArray(address)) {
+          address = address.map((item) => {
+            const newIp = rewriteCloudflareIp(hostname, item.address)
+            return { address: newIp, family: getAddressFamily(newIp) }
+          })
+        } else {
+          address = rewriteCloudflareIp(hostname, address)
+          family = getAddressFamily(address)
+        }
+        const first = Array.isArray(address) ? address[0] : { address, family }
+        const ip = first && first.address
+        const fam = first && first.family
+        if (ip && isValidIpAddress(ip)) {
+          log.info(`----- ${action}: ${hostname}, use default DNS: ${ip}(family: ${fam})${target} -----`)
+          if (res) {
+            res.setHeader('DS-DNS', `default: ${ip} (IPv${fam})`)
+          }
+        }
+        // Node 20+ 默认开启 autoSelectFamily，会以 { all: true } 调用自定义 lookup，
+        // 此时必须回传完整的地址数组；只回传单个 IP 会被 Node 当作数组解析，
+        // 导致 ERR_INVALID_IP_ADDRESS: Invalid IP address: undefined
+        if (Array.isArray(address) && address.length === 0) {
+          // 防御：all 模式下解析结果为空时，按 ENOTFOUND 处理，避免回传空数组
+          const notFound = new Error(`getaddrinfo ENOTFOUND ${hostname}`)
+          notFound.code = 'ENOTFOUND'
+          callback(notFound)
+          return
+        }
+        callback(null, Array.isArray(address) ? address : ip, family)
       })
     }
   },
