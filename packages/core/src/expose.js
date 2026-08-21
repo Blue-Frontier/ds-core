@@ -66,7 +66,7 @@ async function startup ({ mitmproxyPath, setting }) {
   if (conf.server.enabled && !status.server.enabled) {
     tasks.push((async () => {
       try {
-        await server.start({ mitmproxyPath })
+        await server.start({ mitmproxyPath, setting })
       } catch (err) {
         log.error('代理服务启动失败：', err)
       }
