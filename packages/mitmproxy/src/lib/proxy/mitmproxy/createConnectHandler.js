@@ -4,6 +4,7 @@ const jsonApi = require('../../../json')
 const log = require('../../../utils/util.log.server')
 const DnsUtil = require('../../dns')
 const dnsLookup = require('./dnsLookup')
+const trafficMonitor = require('../../traffic/TrafficMonitor')
 
 const localIP = '127.0.0.1'
 
@@ -43,11 +44,14 @@ module.exports = function createConnectHandler (sslConnectInterceptor, middlewar
         connect(req, cltSocket, head, localIP, serverObj.port, null, false, hostname)
       }, (e) => {
         log.error(`----- fakeServer getServerPromise error: ${hostname}:${port}, error:`, e)
+        trafficMonitor.markConnectError(hostname)
       }).catch((e) => {
         log.error(`----- fakeServer getServerPromise error: ${hostname}:${port}, error:`, e)
+        trafficMonitor.markConnectError(hostname)
       })
     } else {
       log.info(`不拦截请求，直连目标服务器: ${hostname}:${port}, headers:`, jsonApi.stringify2(req.headers))
+      trafficMonitor.attachConnect(req, cltSocket)
       connect(req, cltSocket, head, hostname, port, dnsConfig, true)
     }
   }
