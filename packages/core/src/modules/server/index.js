@@ -5,7 +5,7 @@ const lodash = require('lodash')
 const config = require('../../config-api')
 const event = require('../../event')
 const status = require('../../status')
-const jsonApi = require('@docmirror/mitmproxy/src/json')
+const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const log = require('../../utils/util.log.core')
 
 let server = null

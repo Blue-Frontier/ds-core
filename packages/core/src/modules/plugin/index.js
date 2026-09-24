@@ -9,7 +9,7 @@ module.exports = {
     try {
       return require('./free-eye').default
     } catch (e) {
-      const log = require('@docmirror/dev-sidecar/src/utils/util.log-or-console')
+      const log = require('@blue-frontier/dev-sidecar/src/utils/util.log-or-console')
       log.warn('加载 free-eye 插件失败，该插件不可用:', e.message)
       return null
     }

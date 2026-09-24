@@ -1,0 +1,20 @@
+packages:
+  - packages/*
+  - '!**/test/**'
+
+shamefullyHoist: true
+
+# 不要恢复 pnpm overrides：cross-spawn / form-data 等会与 electron-builder 生产依赖解析冲突。
+# 安全版本请通过升级直接依赖解决。
+
+supportedArchitectures:
+  os:
+    - current
+  cpu:
+    - x64
+    - arm64
+    - ia32
+
+allowBuilds:
+  unrs-resolver: true
+  core-js: true

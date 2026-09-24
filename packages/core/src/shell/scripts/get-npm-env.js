@@ -1,7 +1,7 @@
 /**
  * 获取环境变量
  */
-const jsonApi = require('@docmirror/mitmproxy/src/json')
+const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const Shell = require('../shell')
 
 const execute = Shell.execute

@@ -1,4 +1,4 @@
-const HttpsAgent = require('@docmirror/mitmproxy/src/lib/proxy/common/ProxyHttpsAgent')
+const HttpsAgent = require('@blue-frontier/mitmproxy/src/lib/proxy/common/ProxyHttpsAgent')
 const request = require('request')
 
 const options = {

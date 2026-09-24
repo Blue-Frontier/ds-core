@@ -1,7 +1,7 @@
 {
-  "name": "@docmirror/mitmproxy",
+  "name": "@blue-frontier/mitmproxy",
   "version": "2.2.1",
-  "private": false,
+  "private": true,
   "description": "",
   "author": "docmirror.cn",
   "license": "MPL-2.0",
@@ -16,7 +16,7 @@
     "mocha": "^11.8.0"
   },
   "dependencies": {
-    "@docmirror/dev-sidecar": "workspace:*",
+    "@blue-frontier/dev-sidecar": "workspace:*",
     "agentkeepalive": "^4.6.0",
     "axios": "^1.18.1",
     "baidu-aip-sdk": "^4.16.16",

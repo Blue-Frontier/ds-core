@@ -1,7 +1,7 @@
 {
-  "name": "@docmirror/dev-sidecar",
+  "name": "@blue-frontier/dev-sidecar",
   "version": "2.2.1",
-  "private": false,
+  "private": true,
   "description": "给开发者的加速代理工具",
   "author": "docmirror.cn",
   "license": "MPL-2.0",

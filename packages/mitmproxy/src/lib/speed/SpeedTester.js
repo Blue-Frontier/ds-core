@@ -6,7 +6,7 @@ const config = require('./config.js')
 const matchUtil = require('../../utils/util.match.js')
 const cloudflareRoute = require('../cloudflareRoute')
 const { isZeroIp } = require('../dns/util.ip')
-const { configFromFiles } = require('@docmirror/dev-sidecar/src/config/index.js')
+const { configFromFiles } = require('@blue-frontier/dev-sidecar/src/config/index.js')
 
 const familyMapping = matchUtil.domainMapRegexply(configFromFiles.server.dns.familyMapping)
 

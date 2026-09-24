@@ -9,7 +9,7 @@ const fs = require('node:fs')
 const jsonApi = require('../../../json')
 const log = require('../../../utils/util.log.server')
 const matchUtil = require('../../../utils/util.match')
-const configLoader = require('@docmirror/dev-sidecar/src/config/local-config-loader')
+const configLoader = require('@blue-frontier/dev-sidecar/src/config/local-config-loader')
 
 const defaultConfig = {
   // connect阶段所需的兼容性配置

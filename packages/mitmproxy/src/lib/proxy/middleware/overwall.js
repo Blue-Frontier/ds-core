@@ -6,7 +6,7 @@ const request = require('request')
 const log = require('../../../utils/util.log.server')
 const matchUtil = require('../../../utils/util.match')
 const pac = require('./source/pac')
-const dateUtil = require('@docmirror/dev-sidecar/src/utils/util.date')
+const dateUtil = require('@blue-frontier/dev-sidecar/src/utils/util.date')
 
 let pacClient = null
 

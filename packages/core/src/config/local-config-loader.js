@@ -1,7 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const lodash = require('lodash')
-const jsonApi = require('@docmirror/mitmproxy/src/json')
+const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const mergeApi = require('../merge')
 const logOrConsole = require('../utils/util.log-or-console')
 

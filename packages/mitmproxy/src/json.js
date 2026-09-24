@@ -1,4 +1,4 @@
-const logOrConsole = require('@docmirror/dev-sidecar/src/utils/util.log-or-console')
+const logOrConsole = require('@blue-frontier/dev-sidecar/src/utils/util.log-or-console')
 let JSON5 = require('json5')
 if (JSON5.default) {
   JSON5 = JSON5.default

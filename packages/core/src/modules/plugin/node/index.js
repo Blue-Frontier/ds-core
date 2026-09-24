@@ -1,6 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const jsonApi = require('@docmirror/mitmproxy/src/json')
+const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const nodeConfig = require('./config')
 
 function getUserNpmrcPath () {

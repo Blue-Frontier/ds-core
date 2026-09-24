@@ -3,9 +3,9 @@ const monkey = require('../src/lib/monkey')
 
 let scripts
 try {
-  scripts = monkey.load('../gui/extra/scripts/') // 相对于 mitmproxy 目录的相对路径，而不是当前 test 目录的。
+  scripts = monkey.load('./extra/scripts/')
 } catch {
-  scripts = monkey.load('../../gui/extra/scripts/') // 相对于 当前 test 目录的相对路径
+  scripts = monkey.load('../extra/scripts/')
 }
 
 // console.log(scripts)
