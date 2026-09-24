@@ -3,6 +3,7 @@ module.exports = {
   git: require('./git'),
   pip: require('./pip'),
   overwall: require('./overwall'),
+  share: require('./share'),
   // free-eye 为 ESM 模块，CJS require() 得到 { default: ... }，需解包
   // 独立可执行文件（SEA）中无法打包/携带 free-eye，加载失败时降级为不可用，而不是崩溃
   get free_eye () {
