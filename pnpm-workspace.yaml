@@ -18,3 +18,4 @@ supportedArchitectures:
 allowBuilds:
   unrs-resolver: true
   core-js: true
+  keytar: set this to true or false

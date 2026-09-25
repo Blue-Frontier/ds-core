@@ -31,5 +31,8 @@
   "devDependencies": {
     "chai": "^4.5.0",
     "mocha": "^11.8.0"
+  },
+  "optionalDependencies": {
+    "keytar": "^4.10.0"
   }
 }

@@ -1,77 +1,136 @@
 /**
- * ds-p2p://token@host:port#name
- * - token 可省略：ds-p2p://host:port#name
- * - 多节点订阅：一行一个 ds-p2p://
+ * ds-p2p 链接（单一格式）
+ * ds-p2p://<ek>.<iv>.<ct>#name
+ *   ek / iv / ct 均为 base64url；用 . 分段
+ *   AES-128-CTR，ek 每次随机 16B，iv 16B
  */
 
 const SCHEME = 'ds-p2p:'
+const net = require('node:net')
+const crypto = require('node:crypto')
+
+const EK_LEN = 16
+const IV_LEN = 16
+
+function toBase64Url (buf) {
+  return Buffer.from(buf).toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+function fromBase64Url (str) {
+  const s = String(str).replace(/-/g, '+').replace(/_/g, '/')
+  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4))
+  return Buffer.from(s + pad, 'base64')
+}
 
 function encodeName (name) {
   return name ? `#${encodeURIComponent(name)}` : ''
 }
 
-/**
- * @param {{token?: string, host: string, port: number|string, name?: string}} node
- * @returns {string}
- */
+function packBinary (token, host, port) {
+  const ipVersion = net.isIP(host)
+  const tokenBuf = token ? Buffer.from(String(token), 'utf8') : Buffer.alloc(0)
+  if (ipVersion === 4) {
+    const addr = host.split('.').map((x) => Number(x) & 0xff)
+    const buf = Buffer.alloc(2 + 2 + 4 + tokenBuf.length)
+    buf[0] = 2
+    buf[1] = token ? 1 : 0
+    buf.writeUInt16BE(port, 2)
+    addr.forEach((b, i) => {
+      buf[4 + i] = b
+    })
+    tokenBuf.copy(buf, 8)
+    return buf
+  }
+  const hostBuf = Buffer.from(host, 'utf8')
+  const flags = (token ? 1 : 0) | (ipVersion === 6 ? 2 : 4)
+  const buf = Buffer.alloc(2 + 2 + 1 + hostBuf.length + tokenBuf.length)
+  buf[0] = 2
+  buf[1] = flags
+  buf.writeUInt16BE(port, 2)
+  buf[4] = hostBuf.length
+  hostBuf.copy(buf, 5)
+  tokenBuf.copy(buf, 5 + hostBuf.length)
+  return buf
+}
+
+function unpackBinary (buf) {
+  if (!buf || buf.length < 4 || buf[0] !== 2) {
+    return null
+  }
+  const flags = buf[1]
+  const port = buf.readUInt16BE(2)
+  const hasToken = (flags & 1) === 1
+  const isV6 = (flags & 2) === 2
+  const isName = (flags & 4) === 4
+  if (isV6 || isName) {
+    const len = buf[4]
+    const host = buf.subarray(5, 5 + len).toString('utf8')
+    const token = hasToken ? buf.subarray(5 + len).toString('utf8') : ''
+    const node = { host, port }
+    if (token) {
+      node.token = token
+    }
+    return node
+  }
+  if (buf.length < 8) {
+    return null
+  }
+  const host = `${buf[4]}.${buf[5]}.${buf[6]}.${buf[7]}`
+  const token = hasToken ? buf.subarray(8).toString('utf8') : ''
+  const node = { host, port }
+  if (token) {
+    node.token = token
+  }
+  return node
+}
+
 function formatLink (node) {
   if (!node || !node.host) {
     throw new Error('ds-p2p link requires host')
   }
-  const port = node.port || 31288
-  const auth = node.token ? `${encodeURIComponent(node.token)}@` : ''
-  return `${SCHEME}//${auth}${node.host}:${port}${encodeName(node.name || '')}`
+  const port = Number(node.port) || 31288
+  const payload = packBinary(node.token, node.host, port)
+  const ek = crypto.randomBytes(EK_LEN)
+  const iv = crypto.randomBytes(IV_LEN)
+  const cipher = crypto.createCipheriv('aes-128-ctr', ek, iv)
+  const ct = Buffer.concat([cipher.update(payload), cipher.final()])
+  return `${SCHEME}//${toBase64Url(ek)}.${toBase64Url(iv)}.${toBase64Url(ct)}${encodeName(node.name || '')}`
 }
 
-/**
- * @param {string} raw
- * @returns {{token?: string, host: string, port: number, name?: string}}
- */
 function parseLink (raw) {
   const value = String(raw || '').trim()
-  if (!value) {
+  if (!value || !/^ds-p2p:\/\//i.test(value)) {
     return null
-  }
-  if (!value.startsWith(`${SCHEME}//`) && !value.startsWith('ds-p2p://')) {
-    // 允许省略 scheme
-    return parseLink(`ds-p2p://${value}`)
   }
   let rest = value.replace(/^ds-p2p:\/\//i, '')
   let name
   const hashIdx = rest.indexOf('#')
   if (hashIdx >= 0) {
-    name = decodeURIComponent(rest.slice(hashIdx + 1))
+    try {
+      name = decodeURIComponent(rest.slice(hashIdx + 1))
+    } catch {
+      name = rest.slice(hashIdx + 1)
+    }
     rest = rest.slice(0, hashIdx)
   }
-  let token
-  const atIdx = rest.lastIndexOf('@')
-  if (atIdx >= 0) {
-    token = decodeURIComponent(rest.slice(0, atIdx))
-    rest = rest.slice(atIdx + 1)
-  }
-  let host
-  let port = 31288
-  const v6 = rest.match(/^\[([^\]]+)\](?::(\d+))?$/)
-  if (v6) {
-    host = v6[1]
-    port = v6[2] ? Number(v6[2]) : 31288
-  } else {
-    const parts = rest.split(':')
-    if (parts.length === 1 && parts[0]) {
-      host = parts[0]
-    } else if (parts.length === 2 && parts[0] && parts[1]) {
-      host = parts[0]
-      port = Number(parts[1])
-    } else {
-      return null
-    }
-  }
-  if (!host || !Number.isFinite(port) || port <= 0 || port > 65535) {
+  const parts = rest.split('.')
+  if (parts.length !== 3) {
     return null
   }
-  const node = { host, port }
-  if (token) {
-    node.token = token
+  const ek = fromBase64Url(parts[0])
+  const iv = fromBase64Url(parts[1])
+  const ct = fromBase64Url(parts[2])
+  if (ek.length !== EK_LEN || iv.length !== IV_LEN || !ct.length) {
+    return null
+  }
+  const decipher = crypto.createDecipheriv('aes-128-ctr', ek, iv)
+  const plain = Buffer.concat([decipher.update(ct), decipher.final()])
+  const node = unpackBinary(plain)
+  if (!node) {
+    return null
   }
   if (name) {
     node.name = name
@@ -79,10 +138,6 @@ function parseLink (raw) {
   return node
 }
 
-/**
- * 解析多行订阅文本，忽略空行与 # 注释
- * @returns {Array<{token?: string, host: string, port: number, name?: string}>}
- */
 function parsePeerList (text) {
   return String(text || '')
     .split(/\r?\n/)

@@ -5,6 +5,14 @@
 const net = require('node:net')
 const tls = require('node:tls')
 
+function nodeId () {
+  try {
+    return require('./identity').getIdentity().nodeId
+  } catch {
+    return ''
+  }
+}
+
 function basicAuthHeader (token) {
   if (!token) {
     return undefined
@@ -29,6 +37,7 @@ function connectViaPeer (peer, targetHost, targetPort, options = {}) {
       const headers = [
         `CONNECT ${targetHost}:${targetPort} HTTP/1.1`,
         `Host: ${targetHost}:${targetPort}`,
+        `X-Ds-Node-Id: ${nodeId()}`,
         auth ? `Proxy-Authorization: ${auth}` : null,
         'Proxy-Agent: ds-p2p',
         'Connection: keep-alive',
@@ -96,7 +105,7 @@ function connectViaPeer (peer, targetHost, targetPort, options = {}) {
       port: peer.port || 31288,
       // 境内自签 peer
       rejectUnauthorized: false,
-      minVersion: 'TLSv1.2',
+      minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3',
       // 可选伪装 ALPN；节点间非 HTTPS 语义时保持空/自定义即可
       ALPNProtocols: options.ALPNProtocols || ['http/1.1'],
     }, () => onReady(sock))
@@ -130,3 +139,60 @@ module.exports = {
   connectViaAnyPeer,
   basicAuthHeader,
 }
+
+/** 经 TLS 向 peer 请求控制信息（需 token） */
+function getPeerInfo (peer, options = {}) {
+  return requestPeerJson(peer, "GET", "/_ds/p2p/info", null, options)
+}
+
+/** 在 peer 上兑换卡密，clientNodeId 为本机身份 */
+function redeemCardOnPeer (peer, card, clientNodeId, options = {}) {
+  return requestPeerJson(peer, "POST", "/_ds/p2p/redeem", { card, clientNodeId }, options)
+}
+
+function requestPeerJson (peer, method, path, bodyObj, options = {}) {
+  const https = require("node:https")
+  const auth = basicAuthHeader(peer.token)
+  const payload = bodyObj ? JSON.stringify(bodyObj) : null
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      host: peer.host,
+      port: peer.port || 31288,
+      method,
+      path,
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
+      headers: {
+        Host: peer.host,
+        "Content-Type": "application/json",
+        ...(auth ? { "Proxy-Authorization": auth, Authorization: auth } : {}),
+        ...(payload ? { "Content-Length": Buffer.byteLength(payload) } : {}),
+      },
+      timeout: options.timeoutMs || 8000,
+    }, (res) => {
+      const chunks = []
+      res.on("data", (d) => chunks.push(d))
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8")
+        try {
+          resolve({ status: res.statusCode, body: JSON.parse(text) })
+        } catch {
+          resolve({ status: res.statusCode, body: text })
+        }
+      })
+    })
+    req.on("error", reject)
+    req.on("timeout", () => {
+      req.destroy(new Error("peer request timeout"))
+    })
+    if (payload) {
+      req.write(payload)
+    }
+    req.end()
+  })
+}
+
+module.exports.getPeerInfo = getPeerInfo
+module.exports.redeemCardOnPeer = redeemCardOnPeer
+module.exports.requestPeerJson = requestPeerJson

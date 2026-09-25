@@ -39,9 +39,17 @@ const defaultConfig = {
     },
     closeStrategy: 0,
     showShutdownTip: true,
+    showHomeAd: true,
+    homeAd: {
+      text: '',
+      url: '',
+      description: '',
+    },
 
     // 日志相关配置
     logDisabled: false, // 完全禁用日志：控制台不输出，日志文件也不写入
+    logDetail: false, // 详细调试日志：保留 URL path 等；仍会脱敏凭据。问题排查时再开
+    migratedTo: '', // 数据迁移标记，如 '3.0.0'；空表示尚未执行对应迁移
     logFileSavePath: path.join(configLoader.getUserBasePath(), '/logs'), // 日志文件保存路径
     keepLogFileCount: 15, // 保留日志文件数
     maxLogFileSize: 1, // 最大日志文件大小

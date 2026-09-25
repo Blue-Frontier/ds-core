@@ -3,6 +3,7 @@ const log4js = require('log4js')
 const logOrConsole = require('./util.log-or-console')
 const defaultConfig = require('../config/index.js')
 const configFromFiles = defaultConfig.configFromFiles
+const { wrapLogger } = require("./util.redact")
 
 // 日志级别
 const level = process.env.NODE_ENV === 'development' ? 'debug' : 'info'
@@ -100,7 +101,7 @@ module.exports = {
         log4jsConfigure(['core', 'gui'])
       }
 
-      return log4js.getLogger(category)
+      return wrapLogger(log4js.getLogger(category))
     } else {
       if (log == null) {
         log4jsConfigure([category])
@@ -108,7 +109,7 @@ module.exports = {
         log.error(`当前进程已经设置过日志配置，无法再设置 "${category}" 的配置，先临时返回 "${log.category}" 的 log 进行日志记录。如果与其他类型的日志在同一进程中写入，请参照 core 和 gui 一起配置`)
       }
 
-      return log
+      return wrapLogger(log)
     }
   },
 }

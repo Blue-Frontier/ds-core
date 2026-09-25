@@ -1,10 +1,10 @@
 module.exports = {
-  name: '节点分享 (ds-p2p)',
+  name: 'P2P节点分享',
   enabled: false,
-  tip: 'L1：把本机作为对外 HTTP 代理分享给其他 DS 用户；需公网 IP 或路由器 UPnP',
+  tip: '境内节点互连（TLS 1.3 + CONNECT）；出墙仍走 DS 原有加速',
   setting: {
     listenHost: '0.0.0.0',
-    listenPort: 31288,
+    listenPort: 0,
     token: '',
     name: '',
     useUpnp: true,
