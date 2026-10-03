@@ -234,7 +234,7 @@ function handleConnect (token) {
 
 class ShareServer {
   constructor (options = {}) {
-    this.port = options.port || 31288
+    this.port = options.port != null ? options.port : 31288
     this.host = options.host || '0.0.0.0'
     this.token = options.token || ''
     this.name = options.name || ''
@@ -295,6 +295,8 @@ class ShareServer {
       this.server.once('error', reject)
       this.server.listen(this.port, this.host, () => {
         this.server.removeListener('error', reject)
+        // 端口为 0 时由系统随机分配，回填实际端口
+        this.port = this.server.address().port
         log.info(`[p2p] 共享代理已监听 ${this.host}:${this.port} (TLS1.3+CONNECT) node=${this.nodeId}`)
         resolve()
       })
