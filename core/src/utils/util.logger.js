@@ -1,9 +1,8 @@
 const path = require('node:path')
 const log4js = require('log4js')
 const logOrConsole = require('./util.log-or-console')
-const defaultConfig = require('../config/index.js')
-const configFromFiles = defaultConfig.configFromFiles
-const { wrapLogger } = require("./util.redact")
+const { defaultConfig, configFromFiles } = require('../config/index.js')
+const { wrapLogger } = require('./util.redact')
 
 // 日志级别
 const level = process.env.NODE_ENV === 'development' ? 'debug' : 'info'
@@ -83,6 +82,9 @@ function log4jsConfigure (categories) {
 }
 
 module.exports = {
+  getLogDir () {
+    return basePath
+  },
   getLogger (category) {
     if (logDisabled) {
       return noopLogger

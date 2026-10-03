@@ -2,7 +2,7 @@ const fs = require('node:fs')
 const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const lodash = require('lodash')
 const request = require('request')
-const defConfig = require('./config/index.js')
+const { defaultConfig: defConfig, applyDeprecatedRemoteConfigUrlOverride } = require('./config/index.js')
 const mergeApi = require('./merge.js')
 const Shell = require('./shell')
 const log = require('./utils/util.log.core')
@@ -240,7 +240,7 @@ const configApi = {
     return configApi.load(newConfig)
   },
   load (newConfig) {
-    const config = configLoader.getConfigFromFiles(newConfig, defConfig)
+    const config = applyDeprecatedRemoteConfigUrlOverride(configLoader.getConfigFromFiles(newConfig, defConfig))
     configTarget = config
     return config
   },

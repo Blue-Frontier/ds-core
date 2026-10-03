@@ -23,8 +23,31 @@ const HIGHEST_PRIORITY_ONCE_OVERRIDE_OFFICIAL_REMOTE_CONFIG_URL = 'https://ds-of
 
 /** 历史官方地址：命中即被一次性纠正为 HIGHEST_PRIORITY_ONCE_OVERRIDE_OFFICIAL_REMOTE_CONFIG_URL */
 const ONCE_OVERRIDE_DEPRECATED_REMOTE_CONFIG_URLS = [
+  // v1.6.0 ~ v1.7.3 默认（docmirror 官方仓库 master 分支）
+  'https://gitee.com/docmirror/dev-sidecar/raw/master/packages/core/src/config/remote_config.json5',
+  // 更早期（2021-08 尚未定型，路径在 gui/extra 下）
+  'https://gitee.com/docmirror/dev-sidecar/raw/master/packages/gui/extra/config_remote.json5',
+  // v1.8.0 默认（GitHub raw）
+  'https://github.com/docmirror/dev-sidecar/raw/master/packages/core/src/config/remote_config.json5',
+  // v1.8.1 ~ v1.8.9、v2.0.0-RC1 默认（王良仓库 docmirror 分支）
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/docmirror/packages/core/src/config/remote_config.json5',
+  // 开发期中间变体（2024-01 ~ 2024-04，未随 tag 发布）
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/master/packages/core/src/config/remote_config.json5',
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/master/packages/core/src/config/remote_config.json',
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/myself/packages/core/src/config/remote_config.json',
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/config/remote_config.json',
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/remote_config/remote_config.json',
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/remote_config/packages/core/src/config/remote_config.json',
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/docmirror/packages/core/src/config/remote_config.json',
+  // v2.0.0-RC2 ~ v2.0.0.3、v2.0.1-test 默认：所属 Gitee 仓库被 Gitee 强制设为 private 后失效（见 issue #591）
+  'https://gitee.com/wangliang181230/dev-sidecar/raw/docmirror2.x/packages/core/src/config/remote_config.json',
+  // v2.0.1 ~ v2.0.2 默认：迁移到 dev-sidecar-config 仓库后的地址（Gitee 直链形式）
+  'https://gitee.com/wangliang181230/dev-sidecar-config/raw/main/remote_config.json',
+  // v2.1.0 起的地址（giteeusercontent / github raw 两种代理形式）
   'https://raw.giteeusercontent.com/wangliang181230/dev-sidecar-config/raw/main/remote_config.json',
   'https://raw.githubusercontent.com/wangliang181230/dev-sidecar-config/main/remote_config.json',
+  // 第三方 fork，仅出现在 2026-04-27 一次开发提交；非官方默认，如担心覆盖用户自选镜像可删掉此条
+  'https://gitee.com/wzbdyr/dev-sidecar-config/raw/main/remote_config20260426.json',
 ]
 
 const defaultConfig = {
@@ -1318,15 +1341,16 @@ Object.assign(defaultConfig.app.metaInfo, {
 /* eslint-enable no-template-curly-in-string */
 // <<< SYNC:OFFICIAL-FALLBACK:END
 
-// 从本地文件中加载配置
-defaultConfig.configFromFiles = configLoader.getConfigFromFiles(configLoader.getUserConfig(), defaultConfig)
-
-// 一次性、最高优先级的地址覆写：
-// 合并顺序里用户配置优先级最高，用户本地残留的历史官方地址会盖住默认值，这里把它纠正过来。
-// 只纠正 ONCE_OVERRIDE_DEPRECATED_REMOTE_CONFIG_URLS 里的历史官方地址；
-// 用户自己填的其它地址（含自建镜像、留空禁用）一律保留，不干预。
-if (ONCE_OVERRIDE_DEPRECATED_REMOTE_CONFIG_URLS.includes(defaultConfig.configFromFiles.app.remoteConfig.url)) {
-  defaultConfig.configFromFiles.app.remoteConfig.url = HIGHEST_PRIORITY_ONCE_OVERRIDE_OFFICIAL_REMOTE_CONFIG_URL
+function applyDeprecatedRemoteConfigUrlOverride (config) {
+  if (ONCE_OVERRIDE_DEPRECATED_REMOTE_CONFIG_URLS.includes(config.app.remoteConfig.url)) {
+    config.app.remoteConfig.url = HIGHEST_PRIORITY_ONCE_OVERRIDE_OFFICIAL_REMOTE_CONFIG_URL
+  }
+  return config
 }
 
-module.exports = defaultConfig
+// 从本地文件中加载配置。此启动快照仅供模块初始化期消费者使用，不属于默认配置。
+const configFromFiles = applyDeprecatedRemoteConfigUrlOverride(
+  configLoader.getConfigFromFiles(configLoader.getUserConfig(), defaultConfig),
+)
+
+module.exports = { defaultConfig, configFromFiles, applyDeprecatedRemoteConfigUrlOverride }
