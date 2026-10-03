@@ -1,6 +1,6 @@
 # Copilot / AI — ds-core
 
-仓库：Blue-Frontier/ds-core。仅包含 `packages/core` 与 `packages/mitmproxy`。
+仓库：Blue-Frontier/ds-core。仅包含 `core` 与 `mitmproxy`。
 
 - 包名：`@blue-frontier/dev-sidecar`、`@blue-frontier/mitmproxy`（private，不发 npm）
 - 测试：`pnpm --filter @blue-frontier/dev-sidecar test` 与 mitmproxy filter

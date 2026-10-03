@@ -6,8 +6,8 @@
 
 | 路径 | 包名 | 职责 |
 |------|------|------|
-| `packages/core` | `@blue-frontier/dev-sidecar` | 配置合并、插件、系统代理、shell |
-| `packages/mitmproxy` | `@blue-frontier/mitmproxy` | MITM 代理、DNS、拦截、测速、流量 |
+| `core` | `@blue-frontier/dev-sidecar` | 配置合并、插件、系统代理、shell |
+| `mitmproxy` | `@blue-frontier/mitmproxy` | MITM 代理、DNS、拦截、测速、流量 |
 
 **禁止**在此仓修改 GUI / Electron / CLI 业务代码。
 
@@ -30,7 +30,7 @@ pnpm --filter @blue-frontier/mitmproxy test -- test/regex.test.js
 
 - `core`、`mitmproxy` 使用 **CommonJS**（无 `"type": "module"`）
 - 共享 JSON 解析：`@blue-frontier/mitmproxy/src/json`
-- 日志：`packages/core/src/utils/util.logger.js`；文件默认在 `~/.dev-sidecar/logs/`
+- 日志：`core/src/utils/util.logger.js`；文件默认在 `~/.dev-sidecar/logs/`
 - 用户配置：`~/.dev-sidecar/config.json`（兼容旧 `config.json5`）
 - CA：`~/.dev-sidecar/dev-sidecar.ca.crt`
 - 默认端口：HTTP 31180，HTTPS 31181 — **不要随意改默认值**
