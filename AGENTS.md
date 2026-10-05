@@ -1,4 +1,4 @@
-# CLAUDE.md — ds-core
+# AGENTS.md — ds-core
 
 本仓库是 DevSidecar **内核**（`Blue-Frontier/ds-core`），含两个包，**不是** monorepo 全家桶。
 
@@ -42,7 +42,9 @@ pnpm --filter @blue-frontier/mitmproxy test -- test/regex.test.js
 
 ## 与兄弟仓
 
-- 改内核后：打 tag（三仓同版本号）→ cli/gui 更新 submodule 指到该 tag
+- 改内核后：先在 ds-core 提交（**不需要打 tag**，父仓按精确 SHA 指向）→ cli/gui 更新 submodule 指针
+- **三仓各自独立的版本号**：内核（本仓）、CLI（ds-cli）、GUI（dev-sidecar）互不同步；
+  CLI/GUI 的「关于」信息里应展示内嵌内核的版本与 SHA，便于对照
 - GitHub：https://github.com/Blue-Frontier/ds-core  
 - CLI：https://github.com/Blue-Frontier/ds-cli  
 - 历史 monorepo：https://github.com/docmirror/dev-sidecar
