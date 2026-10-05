@@ -35,10 +35,14 @@ pnpm --filter @blue-frontier/mitmproxy test -- test/regex.test.js
 - CA：`~/.dev-sidecar/dev-sidecar.ca.crt`
 - 默认端口：HTTP 31180，HTTPS 31181 — **不要随意改默认值**
 
-## 提交
+## 提交与推送
 
-- AI 可 `git add`；**GPG/SSH 签名提交由人类执行**
+- AI 可 `git add`、整理改动、跑验证；**提交（含签名）由人类执行**
 - 提交信息：`type(scope): 中文摘要`
+- **推送由 AI 负责**：人类提交后告知 AI，AI 执行 `git push` 并做验证（推送不属于签名动作）
+- 验证：`gh api repos/Blue-Frontier/ds-core/commits/main --jq .sha[0:8]` 与本地 HEAD 比对
+- 父仓（ds-cli / 历史 monorepo）按**精确 SHA** 指向本仓；**本仓提交未推送前，父仓不得 bump 指针**
+  —— 否则远端出现悬空引用，任何人 `git clone --recurse-submodules` 都会失败（已发生过两次）
 
 ## 与兄弟仓
 
