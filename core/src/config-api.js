@@ -2,7 +2,8 @@ const fs = require('node:fs')
 const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const lodash = require('lodash')
 const request = require('request')
-const { defaultConfig: defConfig, applyDeprecatedRemoteConfigUrlOverride } = require('./config/index.js')
+const { defaultConfig: defConfig, applyRemoteConfigUrlFix } = require('./config/index.js')
+const { REMOTE_CONFIG_URL_KEYS, isPlainHttpUrl, toHttpsUrl } = require('./config/remote-config-url.js')
 const mergeApi = require('./merge.js')
 const Shell = require('./shell')
 const log = require('./utils/util.log.core')
@@ -240,9 +241,61 @@ const configApi = {
     return configApi.load(newConfig)
   },
   load (newConfig) {
-    const config = applyDeprecatedRemoteConfigUrlOverride(configLoader.getConfigFromFiles(newConfig, defConfig))
+    const config = applyRemoteConfigUrlFix(configLoader.getConfigFromFiles(newConfig, defConfig))
     configTarget = config
+    configApi.persistRemoteConfigUrlHttps(newConfig)
     return config
+  },
+  /**
+   * 把「裸 HTTP → HTTPS」的改写结果持久化到用户配置文件（config.json）。
+   *
+   * 仅在用户配置里确实是 http:// 开头的地址时才写盘，且只改 app.remoteConfig 这两个字段，
+   * 不动其它用户配置；改写后原值已是 https，再次加载不会重复写盘（幂等）。
+   *
+   * @param {object} newConfig load() 的入参（用户配置或差异配置）
+   */
+  persistRemoteConfigUrlHttps (newConfig) {
+    try {
+      const configPath = configLoader.getUserConfigPath()
+      let userConfig = {}
+      if (fs.existsSync(configPath)) {
+        userConfig = configLoader.loadConfigFromFile(configPath)
+      }
+      if (typeof userConfig !== 'object' || userConfig == null) {
+        userConfig = {}
+      }
+
+      const fixedRemoteConfig = configTarget?.app?.remoteConfig
+      if (fixedRemoteConfig == null) {
+        return
+      }
+
+      let changed = false
+      for (const key of REMOTE_CONFIG_URL_KEYS) {
+        const keyPath = ['app', 'remoteConfig', key]
+        const oldUrl = lodash.get(userConfig, keyPath) ?? lodash.get(newConfig, keyPath)
+        if (!isPlainHttpUrl(oldUrl)) {
+          continue
+        }
+        // 优先用合并后已修正的值（历史废弃地址会被一次性纠正成官方地址）
+        const fixedUrl = typeof fixedRemoteConfig[key] === 'string' && fixedRemoteConfig[key]
+          ? fixedRemoteConfig[key]
+          : toHttpsUrl(oldUrl)
+        lodash.set(userConfig, keyPath, fixedUrl)
+        changed = true
+        log.info(`远程配置地址不再支持裸HTTP，已改写为HTTPS并保存到用户配置: ${oldUrl} -> ${fixedUrl}`)
+      }
+
+      if (!changed) {
+        return
+      }
+
+      fs.writeFileSync(configPath, jsonApi.stringify(userConfig))
+      log.info('保存 config.json（远程配置地址 HTTPS 改写）成功:', configPath)
+    } catch (e) {
+      // 持久化失败不影响本次运行：内存中的 configTarget 已是 https 地址
+      log.error('保存远程配置地址 HTTPS 改写结果失败:', e)
+    }
   },
   cloneDefault () {
     return lodash.cloneDeep(defConfig)

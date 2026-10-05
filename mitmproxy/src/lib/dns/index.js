@@ -3,6 +3,7 @@ const echDomainUtil = require('../proxy/common/ech/domain')
 const ipUtil = require('./util.ip')
 const log = require('../../utils/util.log.server')
 const DNSOverPreSetIpList = require('./preset.js')
+const DNSOverNat64 = require('./nat64.js')
 const DNSOverHTTPS = require('./https.js')
 const DNSOverTLS = require('./tls.js')
 const DNSOverTCP = require('./tcp.js')
@@ -12,11 +13,13 @@ module.exports = {
   /**
    * @param dnsProviders DNS服务列表
    * @param preSetIpList 预设IP列表
-   * @param options 选项，其中 `options.ech` 为 ECH配置（RFC 9848），形如 `{ enabled, cacheSize, emptyTtl, minTtl, maxTtl }`
+   * @param options 选项，其中 `options.ech` 为 ECH配置（RFC 9848），形如 `{ enabled, cacheSize, emptyTtl, minTtl, maxTtl }`；
+   *                `options.nat64` 为 NAT64配置，形如 `{ enabled, prefix, domains, doh, bootstrap }`
    */
   initDNS (dnsProviders, preSetIpList, options = {}) {
     const dnsMap = {}
     const echOptions = options.ech || {}
+    const nat64Options = options.nat64 || {}
 
     // 创建普通的DNS
     for (const provider in dnsProviders) {
@@ -111,6 +114,21 @@ module.exports = {
       dnsMap.ForSNI = dnsMap.PreSet
     }
 
+    // 创建 NAT64 的DNS：把域名解析出的真实IPv4嵌入NAT64前缀，得到可直连的IPv6地址
+    if (nat64Options.enabled === true) {
+      // providers 传入供「解析用DNS」使用（与「ECH专用DNS」的设置方式一致）
+      const nat64Dns = new DNSOverNat64({ ...nat64Options, providers: dnsProviders }, preSetIpList)
+      dnsMap.Nat64 = nat64Dns
+      if (nat64Dns.initEch != null) {
+        // NAT64通道同样可以查询HTTPS记录，作为ECH参数的来源之一
+        nat64Dns.initEch({
+          ...echOptions,
+          enabled: echOptions.enabled !== false && nat64Options.ech !== false,
+        })
+      }
+      log.info(`已启用NAT64：域名 ${JSON.stringify(nat64Options.domains)}, 前缀: ${nat64Dns.prefix}, 解析用DNS: ${nat64Options.dns || '默认'}, DoH: ${nat64Dns.dohList.join(' | ')}`)
+    }
+
     log.info(`设置SNI默认使用的DNS为 '${dnsMap.ForSNI.dnsName}'（注：当某个域名配置了SNI但未配置DNS时，将默认使用该DNS）`)
 
     return dnsMap
@@ -122,6 +140,11 @@ module.exports = {
    * 且必须拿到真实可用的IP，否则握手会失败（表现为回退原生TLS或连接被重置）。
    */
   isEchDomain (dnsConfig, hostname) {
+    if (this.isNat64Domain(dnsConfig, hostname)) {
+      // NAT64域名（把真实IPv4嵌进NAT64前缀直连）一律按ECH域名处理：
+      // 必须用真实SNI完成ECH握手，否则明文SNI会被中间网络重置
+      return true
+    }
     if (dnsConfig == null || dnsConfig.ech == null) {
       return false
     }
@@ -129,6 +152,19 @@ module.exports = {
       return false
     }
     return echDomainUtil.isEchDomain(dnsConfig.echDomains, hostname)
+  },
+
+  /**
+   * 该域名是否走 NAT64 直连（域名在 `server.dns.nat64.domains` 名单中，且NAT64已启用）
+   *
+   * 走NAT64的域名一律用NAT64通道解析IP（本网络的常规DNS可能被投毒、直连DoH被阻断），
+   * 且会被当作ECH域名（在 `options.js` 中并入ECH名单）：自动拦截、跳过增强模式、上游TLS使用ECH。
+   */
+  isNat64Domain (dnsConfig, hostname) {
+    if (dnsConfig == null || dnsConfig.dnsMap == null || dnsConfig.dnsMap.Nat64 == null) {
+      return false
+    }
+    return echDomainUtil.isEchDomain(dnsConfig.nat64Domains, hostname)
   },
 
   /**
@@ -153,8 +189,16 @@ module.exports = {
    * 预设IP通常是域名自己的源站IP，可能不支持ECH（此时ECH握手会失败，只能回退到原生TLS）；
    * 但 Cloudflare 站点在默认解析出的IP被阻断时，也可以用它指定一组可用的 Cloudflare IP，
    * 因此 `server.dns.ech.preSetIpDomains` 里的域名例外：允许使用预设IP与IP测速结果。
+   *
+   * 注：忽略预设IP不等于完全不用——ECH专用DNS解析不出可用IP时会回退到预设IP
+   * （回退逻辑在 `proxy/mitmproxy/dnsLookup.js`）。
    */
   isEchIgnorePreSetIp (dnsConfig, hostname) {
+    if (this.isNat64Domain(dnsConfig, hostname)) {
+      // NAT64域名：优先用NAT64通道动态解析，「预设IP」只在解析失败时作为回退
+      // （回退逻辑在 dnsLookup.js，需要 ignorePreSetIpList=true 才会启用 preSetDns 回退）
+      return true
+    }
     if (dnsConfig == null || dnsConfig.ech == null) {
       return true
     }
@@ -163,8 +207,29 @@ module.exports = {
 
   getDNSAndFamily (dnsConfig, hostname) {
     const isEchDomain = this.isEchDomain(dnsConfig, hostname)
+    // ECH域名的「预设IP」例外：强制优先使用预设IP
+    const echForcePreSetIp = isEchDomain && !this.isEchIgnorePreSetIp(dnsConfig, hostname)
 
-    // ECH域名优先使用ECH指定的DNS
+    // 0. NAT64域名：用NAT64通道解析（域名在本网络可能被投毒或阻断，只有NAT64通道能拿到真实IP）
+    if (this.isNat64Domain(dnsConfig, hostname)) {
+      return {
+        dns: dnsConfig.dnsMap.Nat64,
+      }
+    }
+
+    // 1. 匹配 预设IP配置
+    // ECH域名默认强制忽略预设IP（改用ECH指定的DNS解析，解析不出可用IP时由 dnsLookup 回退到预设IP），
+    // 例外名单（`server.dns.ech.preSetIpDomains`）里的域名则强制优先使用预设IP
+    if (!isEchDomain || echForcePreSetIp) {
+      const hostnamePreSetIpList = matchUtil.matchHostname(dnsConfig.preSetIpList, hostname, 'matched preSetIpList(getDNSAndFamily)')
+      if (hostnamePreSetIpList) {
+        return {
+          dns: dnsConfig.dnsMap.PreSet,
+        }
+      }
+    }
+
+    // 2. ECH域名优先使用ECH指定的DNS
     if (isEchDomain) {
       const echDns = this.getEchDNS(dnsConfig)
       if (echDns != null) {
@@ -174,18 +239,7 @@ module.exports = {
       }
     }
 
-    // 1. 匹配 预设IP配置（ECH域名默认强制忽略预设IP，避免ECH握手打到不支持ECH的IP上）
-    const ignorePreSetIp = isEchDomain && this.isEchIgnorePreSetIp(dnsConfig, hostname)
-    if (!ignorePreSetIp) {
-      const hostnamePreSetIpList = matchUtil.matchHostname(dnsConfig.preSetIpList, hostname, 'matched preSetIpList(getDNSAndFamily)')
-      if (hostnamePreSetIpList) {
-        return {
-          dns: dnsConfig.dnsMap.PreSet,
-        }
-      }
-    }
-
-    // 2. 读取域名对应的DNS配置
+    // 3. 读取域名对应的DNS配置
     const dnsData = matchUtil.matchHostname(dnsConfig.mapping, hostname, 'get dns data')
     if (!dnsData) {
       return null
@@ -325,5 +379,53 @@ module.exports = {
         }
       })
     })
+  },
+
+  /**
+   * ECH握手成功/失败后，把该IP计入相关DNS的优选统计（用于把域名切换到ECH可用的IP）
+   *
+   * 同一个域名的不同IP上ECH的可用性可能不同（边缘节点不支持ECH、或该IP被针对性干扰），
+   * 而ECH握手失败以前不会反馈给DNS，导致IP优选结果只能按「慢/超时」调整，ECH命中率不稳定。
+   *
+   * ECH域名只会用「ECH专用DNS」或「预设IP」的解析结果，所以只反馈给这两个DNS，
+   * 不波及 local/aliyun 等其它DNS的IP优选结果；没有该域名缓存的DNS会自动忽略这次计数。
+   *
+   * @param dnsConfig DNS配置
+   * @param hostname 域名
+   * @param ip 本次ECH连接使用的IP
+   * @param isError true=记失败（连续失败后会切换到下一个IP），false=记成功（重置连续失败计数）
+   * @param reason 计入失败的原因（仅用于日志）
+   */
+  countEchIp (dnsConfig, hostname, ip, isError, reason) {
+    if (dnsConfig == null || hostname == null || ip == null || ip === hostname) {
+      return
+    }
+
+    const dnsList = [this.getEchDNS(dnsConfig)]
+    if (dnsConfig.dnsMap != null && dnsConfig.dnsMap.PreSet != null) {
+      dnsList.push(dnsConfig.dnsMap.PreSet)
+    }
+    if (dnsConfig.dnsMap != null && dnsConfig.dnsMap.Nat64 != null) {
+      // NAT64域名用的IP来自NAT64通道，失败反馈要记到它自己的IP缓存里，才能切换到下一个IP
+      dnsList.push(dnsConfig.dnsMap.Nat64)
+    }
+
+    let counted = false
+    for (const dns of dnsList) {
+      if (dns == null) {
+        continue
+      }
+      dns.count(hostname, ip, isError)
+      counted = true
+    }
+
+    if (!counted) {
+      return
+    }
+    if (isError) {
+      log.error(`记录ip失败次数，用于优选ip！ hostname: ${hostname}, ip: ${ip}, reason: ${reason}, dns: ECH`)
+    } else {
+      log.debug(`记录ip成功次数，用于优选ip！ hostname: ${hostname}, ip: ${ip}, dns: ECH`)
+    }
   },
 }

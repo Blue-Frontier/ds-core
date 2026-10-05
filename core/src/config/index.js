@@ -1,5 +1,6 @@
 const path = require('node:path')
 const configLoader = require('./local-config-loader')
+const { applyRemoteConfigUrlHttps } = require('./remote-config-url')
 
 function getRootCaCertPath () {
   return path.join(configLoader.getUserBasePath(), '/dev-sidecar.ca.crt')
@@ -1341,16 +1342,32 @@ Object.assign(defaultConfig.app.metaInfo, {
 /* eslint-enable no-template-curly-in-string */
 // <<< SYNC:OFFICIAL-FALLBACK:END
 
-function applyDeprecatedRemoteConfigUrlOverride (config) {
-  if (ONCE_OVERRIDE_DEPRECATED_REMOTE_CONFIG_URLS.includes(config.app.remoteConfig.url)) {
-    config.app.remoteConfig.url = HIGHEST_PRIORITY_ONCE_OVERRIDE_OFFICIAL_REMOTE_CONFIG_URL
+/**
+ * 修正合并后的远程配置地址：
+ * 1. 命中 ONCE_OVERRIDE_DEPRECATED_REMOTE_CONFIG_URLS 的历史官方地址 → 一次性纠正为官方地址；
+ * 2. 裸 HTTP 地址 → 改写为 HTTPS（远程配置已不支持裸HTTP，见 ./remote-config-url.js）。
+ *
+ * 注意：只修正内存中的合并结果，持久化写回由 config-api.js 的 persistRemoteConfigUrlHttps 负责。
+ *
+ * @param {object} config 合并后的配置
+ * @returns {object} 原 config（就地修改）
+ */
+function applyRemoteConfigUrlFix (config) {
+  const remoteConfig = config?.app?.remoteConfig
+  if (remoteConfig == null) {
+    return config
   }
-  return config
+
+  if (ONCE_OVERRIDE_DEPRECATED_REMOTE_CONFIG_URLS.includes(remoteConfig.url)) {
+    remoteConfig.url = HIGHEST_PRIORITY_ONCE_OVERRIDE_OFFICIAL_REMOTE_CONFIG_URL
+  }
+
+  return applyRemoteConfigUrlHttps(config)
 }
 
 // 从本地文件中加载配置。此启动快照仅供模块初始化期消费者使用，不属于默认配置。
-const configFromFiles = applyDeprecatedRemoteConfigUrlOverride(
+const configFromFiles = applyRemoteConfigUrlFix(
   configLoader.getConfigFromFiles(configLoader.getUserConfig(), defaultConfig),
 )
 
-module.exports = { defaultConfig, configFromFiles, applyDeprecatedRemoteConfigUrlOverride }
+module.exports = { defaultConfig, configFromFiles, applyRemoteConfigUrlFix }

@@ -98,6 +98,40 @@ class DynamicChoice {
   }
 
   /**
+   * 重置失败计数，从候选中重新选择一个「真实IP」（不是域名兜底项）
+   *
+   * 真实IP连续失败后 value 会退化成域名兜底项（见 `dns/base.js` 的 `ipList.push(hostname)`），
+   * 此时下游会把域名交给系统DNS解析（可能被投毒或阻断），需要给真实IP一次新的机会。
+   *
+   * @param hostname 域名兜底项（不会被选中）
+   * @returns {boolean} 是否成功选出了真实IP（false 表示候选中只有域名兜底项）
+   */
+  resetChoice (hostname) {
+    const ipList = []
+    for (const key in this.countMap) {
+      const count = this.countMap[key]
+      count.keepErrorCount = 0 // 清空连续失败
+      count.total = 0
+      count.error = 0
+      count.successRate = 1.0
+      if (key !== hostname) {
+        ipList.push(key)
+      }
+    }
+
+    if (ipList.length === 0) {
+      return false
+    }
+
+    const valueBackup = this.value
+    this.backupList = ipList
+    this.value = this.backupList.shift()
+    this.doCount(this.value, false)
+    log.info(`重置失败计数完成: ${this.key}, ip: ${valueBackup} ➜ ${this.value}, backupList: ${JSON.stringify(this.backupList)}`)
+    return true
+  }
+
+  /**
    * 记录使用次数或错误次数
    * @param ip
    * @param isError

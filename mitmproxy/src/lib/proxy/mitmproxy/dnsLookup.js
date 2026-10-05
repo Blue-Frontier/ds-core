@@ -85,6 +85,8 @@ function createIpChecker (tester) {
 module.exports = {
   // options.ignorePreSetIpList: ECH域名强制忽略预设IP（预设IP通常是域名自身的源站IP，不支持ECH）
   // options.ignoreSpeedTest: ECH域名强制忽略IP测速结果（测速池同样可能来自预设IP或其它DNS）
+  // options.preSetDns: ECH域名在「ECH专用DNS解析不出可用IP」时用于回退的预设IP的DNS实例（null 表示不回退）
+  // options.resetOnHostnameFallback: ECH域名在IP地址缓存退化为「域名兜底项」时，重置失败计数重新使用真实IP
   createLookupFunc (res, dnsAndFamily, action, target, port, isDnsIntercept, options = {}) {
     target = target ? (`, target: ${target}`) : ''
 
@@ -92,6 +94,8 @@ module.exports = {
     const family = Number.parseInt(dnsAndFamily.family) === 6 ? 6 : 4
     const ignorePreSetIpList = options.ignorePreSetIpList === true
     const ignoreSpeedTest = options.ignoreSpeedTest === true
+    const preSetDns = options.preSetDns || null
+    const resetOnHostnameFallback = options.resetOnHostnameFallback === true
 
     return (hostname, options, callback) => {
       const all = options && options.all === true
@@ -164,22 +168,48 @@ module.exports = {
         }
       }
 
-      dns.lookup(hostname, { ipChecker, family, ignorePreSetIpList }).then((ip) => {
+      // ECH域名：ECH专用DNS解析不出可用IP时（DNS查询失败、没查到地址、缓存里的真实IP都失败了），回退到「预设IP」
+      const resolvePreSetIp = async () => {
+        if (preSetDns == null) {
+          return null
+        }
+        try {
+          // 预设IP的缓存同样会退化为域名兜底项（预设IP失败后），这里一并重置，否则回退拿不到可用IP
+          const preSetIp = await preSetDns.lookup(hostname, { family, resetOnHostnameFallback })
+          if (preSetIp != null && preSetIp !== hostname && isValidIpAddress(preSetIp)) {
+            log.info(`----- ${action}: ${hostname}, ECH专用DNS未解析出可用IP，回退预设IP: ${preSetIp}${target} -----`)
+            return preSetIp
+          }
+        } catch (e) {
+          log.warn(`----- ${action}: ${hostname}, ECH专用DNS未解析出可用IP，回退预设IP失败${target}, error:`, e)
+        }
+        return null
+      }
+
+      dns.lookup(hostname, { ipChecker, family, ignorePreSetIpList, resetOnHostnameFallback }).then(async (ip) => {
+        let usedDns = dns
+        if (preSetDns != null && (ip == null || ip === hostname || !isValidIpAddress(ip))) {
+          const preSetIp = await resolvePreSetIp()
+          if (preSetIp != null) {
+            ip = preSetIp
+            usedDns = preSetDns
+          }
+        }
         if (ip !== hostname && isValidIpAddress(ip)) {
           markBlockedIfAllZero(hostname, ip)
-          ip = rewriteCloudflareIp(hostname, ip, dns && dns.dnsName === 'PreSet')
+          ip = rewriteCloudflareIp(hostname, ip, usedDns && usedDns.dnsName === 'PreSet')
           const addressFamily = getAddressFamily(ip)
           if (isDnsIntercept) {
-            isDnsIntercept.dns = dns
+            isDnsIntercept.dns = usedDns
             isDnsIntercept.hostname = hostname
             isDnsIntercept.ip = ip
             if (tester) {
               isDnsIntercept.tester = tester
             }
           }
-          log.info(`----- ${action}: ${hostname}, use ip from dns '${dns.dnsName}': ${ip}(family: ${addressFamily})${target} -----`)
+          log.info(`----- ${action}: ${hostname}, use ip from dns '${usedDns.dnsName}': ${ip}(family: ${addressFamily})${target} -----`)
           if (res) {
-            const dnsLabel = dns.dnsName === '预设IP' ? 'PreSet' : safeHeaderValue(dns.dnsName)
+            const dnsLabel = usedDns.dnsName === '预设IP' ? 'PreSet' : safeHeaderValue(usedDns.dnsName)
             res.setHeader('DS-DNS', `${dnsLabel}: ${ip} (IPv${addressFamily})`)
           }
           respondLookup(callback, ip, addressFamily, all)

@@ -114,22 +114,43 @@ module.exports = (serverConfig) => {
   // 插件列表
   const middlewares = []
 
-  // 增强功能插件：如果启用了，则添加到插件列表中
-  const overwallMiddleware = createOverwallMiddleware(overWallConfig)
-  if (overwallMiddleware) {
-    middlewares.push(overwallMiddleware)
-  }
-
   const preSetIpList = matchUtil.domainMapRegexply(serverConfig.preSetIpList)
 
   // ECH配置（RFC 9848）：通过DNS的HTTPS(65)记录获取 ech 参数，用于上游TLS握手
   const dnsEchConfig = serverConfig.dns.ech || {}
+
+  // NAT64配置：把（可能被投毒/阻断的）域名解析成真实IPv4后嵌入NAT64前缀，走IPv6直连
+  const nat64Config = serverConfig.dns.nat64 || {}
+  // NAT64 前缀必须由使用者配置：不内置任何公共 NAT64 网关（流量经该网关转发，属第三方中转）
+  const nat64Prefix = String(nat64Config.prefix || '').trim()
+  const nat64Declared = nat64Config.enabled === true
+    && Array.isArray(nat64Config.domains) && nat64Config.domains.length > 0
+  if (nat64Declared && nat64Prefix === '') {
+    log.warn('已启用 NAT64 但未配置「NAT64前缀」（server.dns.nat64.prefix），NAT64 不会生效；请填写所使用的 NAT64 服务提供的前缀')
+  }
+  const isNat64Enabled = nat64Declared && nat64Prefix !== ''
+  const nat64DomainMap = isNat64Enabled ? echDomainUtil.createEchDomainMap(nat64Config) : null
+  // NAT64域名必须使用ECH（SNI被加密才不会被中间网络重置），因此并入ECH域名名单：
+  // 这样它们会自动被拦截（MITM）、跳过增强模式、忽略SNI改写与预设IP
+  const echConfig = isNat64Enabled
+    ? { ...dnsEchConfig, domains: { ...echDomainUtil.toHostMap(dnsEchConfig.domains), ...echDomainUtil.toHostMap(nat64Config.domains) } }
+    : dnsEchConfig
+
   // ECH域名匹配表：ECH域名会强制忽略预设IP、SNI改写等常规配置，这里先解析一次
-  const echDomainMap = echDomainUtil.createEchDomainMap(dnsEchConfig)
+  const echDomainMap = echDomainUtil.createEchDomainMap(echConfig)
   // ECH域名中允许使用预设IP与IP测速的例外名单（默认全部忽略预设IP）
-  const echPreSetIpDomainMap = echDomainUtil.createEchDomainMap({ domains: dnsEchConfig.preSetIpDomains })
-  const isEchEnabled = dnsEchConfig.enabled !== false && dnsEchConfig.use !== false
-  const checkEchDomain = hostname => isEchEnabled && echDomainUtil.isEchDomain(echDomainMap, hostname)
+  const echPreSetIpDomainMap = echDomainUtil.createEchDomainMap({ domains: echConfig.preSetIpDomains })
+  const isEchEnabled = echConfig.enabled !== false && echConfig.use !== false
+  // NAT64域名必须被拦截（MITM）才能走NAT64直连并使用ECH，与ECH开关无关
+  const checkNat64Domain = hostname => isNat64Enabled && echDomainUtil.isEchDomain(nat64DomainMap, hostname)
+  const checkEchDomain = hostname => checkNat64Domain(hostname) || (isEchEnabled && echDomainUtil.isEchDomain(echDomainMap, hostname))
+
+  // 增强功能插件：如果启用了，则添加到插件列表中
+  // 注：ECH域名不会进入增强模式的反代路径（由 checkEchDomain 判断），必须直连才能使用ECH
+  const overwallMiddleware = createOverwallMiddleware(overWallConfig, { checkEchDomain })
+  if (overwallMiddleware) {
+    middlewares.push(overwallMiddleware)
+  }
 
   const options = {
     host: serverConfig.host,
@@ -137,12 +158,16 @@ module.exports = (serverConfig) => {
     maxLength: serverConfig.fakeServerMaxLength,
     dnsConfig: {
       preSetIpList,
-      dnsMap: dnsUtil.initDNS(serverConfig.dns.providers, preSetIpList, { ech: dnsEchConfig }),
+      dnsMap: dnsUtil.initDNS(serverConfig.dns.providers, preSetIpList, {
+        ech: echConfig,
+        nat64: { ...nat64Config, enabled: isNat64Enabled },
+      }),
       mapping: matchUtil.domainMapRegexply(dnsMapping),
       speedTest: serverConfig.dns.speedTest,
-      ech: dnsEchConfig,
+      ech: echConfig,
       echDomains: echDomainMap,
       echPreSetIpDomains: echPreSetIpDomainMap,
+      nat64Domains: nat64DomainMap,
     },
     setting,
     compatibleConfig: {

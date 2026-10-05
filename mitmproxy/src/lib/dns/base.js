@@ -323,6 +323,18 @@ module.exports = class BaseDNS {
   async lookup (hostname, options = {}) {
     try {
       let ipCache = this.cache.get(hostname)
+      // ECH域名：IP地址缓存退化成「域名兜底项」时（此前解析出的真实IP都被判定失败），先重置失败计数重新使用真实IP；
+      // 缓存里从未解析出真实IP时，清除缓存重新解析一次。
+      // 否则下游会把域名交给系统DNS解析（可能被投毒或阻断），表现为一直连接超时（ECH域名尤其致命：必须用真实IP才能完成ECH握手）
+      if (ipCache != null && options.resetOnHostnameFallback === true && ipCache.value === hostname) {
+        const reset = ipCache.resetChoice(hostname)
+        log.info(`[DNS-over-${this.dnsType} '${this.dnsName}'] IP地址缓存已退化为域名兜底项${reset ? `，重置失败计数后重新使用真实IP: ${ipCache.value}` : '，缓存中没有真实IP，清除缓存重新解析'}: ${hostname}`)
+        if (!reset) {
+          this.cache.delete(hostname)
+          ipCache = null
+        }
+      }
+
       if (ipCache) {
         const ip = ipCache.value
         if (ip != null) {
