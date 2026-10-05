@@ -44,6 +44,14 @@ pnpm --filter @blue-frontier/mitmproxy test -- test/regex.test.js
 
 - 改内核后：先在 ds-core 提交（**不需要打 tag**，父仓按精确 SHA 指向）→ cli/gui 更新 submodule 指针
 - **三仓各自独立的版本号**：内核（本仓）、CLI（ds-cli）、GUI（dev-sidecar）互不同步；
+### 内核版本号已废弃
+
+- 本仓两个包的 `version` 字段**已废弃**，仅有形式作用（包必须有个版本号才能被 pnpm 解析）。
+- 它的历史来源是抄历史 monorepo 的应用版本号，**与内核实际内容无关**，
+  **不得在任何面向最终用户的地方展示**（CLI/GUI 的关于信息、状态输出、界面底栏等一律不显示）。
+- 内核的身份一律用**提交 SHA**：短 SHA 面向用户展示（如 `ds-core@582630b`），
+  长 SHA 供排障与构建日志对照。父仓（CLI/GUI）按精确 SHA 钉住子模块指针。
+- 若将来确实需要"内核发布名"，用 git tag（如 `kernel-1.0.0`）当名字，钉指针仍走 SHA。
   CLI/GUI 的「关于」信息里应展示内嵌内核的版本与 SHA，便于对照
 - GitHub：https://github.com/Blue-Frontier/ds-core  
 - CLI：https://github.com/Blue-Frontier/ds-cli  
