@@ -559,7 +559,15 @@ const executor = {
 
       log.info('开始设置windows系统代理:', ip, port, setEnv)
 
-      const sysproxy = require('@starknt/sysproxy')
+      // SEA（单文件）里没有 node_modules，require 原生模块会直接抛出
+      // "No such built-in module: @starknt/sysproxy"。这句必须放进 try，
+      // 否则下面的 sysproxy.exe 回退分支永远不会被执行（发布版表现为静默不生效）。
+      let sysproxy = null
+      try {
+        sysproxy = require('@starknt/sysproxy')
+      } catch (e) {
+        log.warn('@starknt/sysproxy 不可用，将改用 sysproxy.exe 回退方案：', e.message)
+      }
       const proxyHttp = config.get().proxy.proxyHttp
 
       // 单端口代理：HTTP/HTTPS 共用一个端口，Windows 地址栏=IP、端口栏=端口
@@ -570,6 +578,9 @@ const executor = {
       const excludeIpStr = getProxyExcludeIpStr(';')
       // 设置代理，同时设置排除域名
       try {
+        if (sysproxy == null) {
+          throw new Error('@starknt/sysproxy 不可用，直接走 sysproxy.exe 回退')
+        }
         sysproxy.triggerManualProxy(true, ip, port, excludeIpStr)
         log.info(`设置windows系统代理成功: ${proxyAddr} ......(省略排除IP列表)`)
       } catch (e1) {
@@ -619,7 +630,7 @@ const executor = {
         require('@starknt/sysproxy').triggerManualProxy(false, '', 0, '')
         log.info('关闭windows系统代理成功')
       } catch (e1) {
-        log.error('关闭windows系统代理失败：执行 `@starknt/sysproxy` 失败，现尝试通过执行 `sysproxy.exe set 1` 来关闭系统代理！\r\n捕获的异常:', e1)
+        log.warn('关闭windows系统代理失败：执行 `@starknt/sysproxy` 失败，现尝试通过执行 `sysproxy.exe set 1` 来关闭系统代理！\r\n捕获的异常:', e1)
 
         try {
           const proxyPath = extraPath.getProxyExePath()

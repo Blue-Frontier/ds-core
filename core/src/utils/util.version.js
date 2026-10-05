@@ -58,7 +58,15 @@ function isNewVersion (onlineVersion, currentVersion, log = null) {
       }
     }
 
-    // 版本号相同，继续比对预发布版本号
+    // 版本号相同，继续比对预发布版本号。
+    //
+    // ⚠️ 已知缺陷：下面把整个 pre 段当作**字符串**比较，因此 <run_number> 跨位数时会判反方向：
+    //    "beta.100" < "beta.99"（逐字符比 "1" < "9"），于是当前 beta.99 看线上 beta.100 会得到
+    //    -101「无需更新」；同理 "beta.9" 会被判定为比 "beta.788" 更新。
+    //    实际影响有限：正式版用户看不到预发布版更新（见 packages/gui/src/bridge/update/backend.js
+    //    里的 skipPreRelease 守卫），且线上「最近可用版本」通常就是最新的那个，触发需要
+    //    「当前号比线上大但位数更少」这种巧合。2026-10 时 run_number 已近 800，下一个坎是 1000。
+    //    若要彻底修：按 "." 分段、数字段按数值比较（semver 语义），而不是整段比字符串。
     if (onlineVersionObj.pre && curVersionObj.pre) {
       // 都为预发布版本时，直接比较预发布版本号字符串的大小
       if (onlineVersionObj.pre > curVersionObj.pre) {

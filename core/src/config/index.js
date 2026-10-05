@@ -170,7 +170,7 @@ const defaultConfig = {
 // >>> SYNC:OFFICIAL-FALLBACK:BEGIN
 // 「internal 底本」：官方配置的规则类节点，由 _script/sync-official-config.mjs 在构建时自动更新，请勿手改。
 // 来源地址：https://ds-official-config.bestar.de5.net/remote_config.json5
-// 来源版本：202610031740（新增 ech 配置）
+// 来源版本：202610060150（去除自带nat64默认前缀需要用户自行查询）
 // 下载失败时脚本不会改动本区块，即保留上一次的同步结果。
 // 用 Object.assign 整体替换（不是深合并），这样官方「删掉」的键也会跟着消失。
 /* eslint-disable no-template-curly-in-string -- 官方配置里存在 ${...} 形式的普通字符串（如代理目标），并非模板串 */
@@ -436,6 +436,40 @@ Object.assign(defaultConfig, {
         url: 'https://github.com/docmirror/dev-sidecar/releases',
         children: [
           {
+            title: 'v2.3.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2026-10-03 ] v2.3.0（支持 ECH 加密 SNI、请求自动重试，新增「日志与流量」「GitHub 状态监控」页）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v2.3.0',
+              },
+            ],
+          },
+          {
+            title: 'v2.2.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2026-07-02 ] v2.2.0（实验性自动更新、HTTP/2 代理、按需 IP 探测，修复诸多安全漏洞）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v2.2.0',
+              },
+            ],
+          },
+          {
+            title: 'v2.1.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2026-06-29 ] v2.1.1（修复 v2.1.0 中的问题及诸多安全漏洞）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v2.1.1',
+              },
+              {
+                title: '[ 2026-06-28 ] v2.1.0（稳定性提升，free eye 插件回归）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v2.1.0',
+              },
+            ],
+          },
+          {
             title: 'v2.0.x',
             rowClass: 'title2',
             children: [
@@ -450,6 +484,14 @@ Object.assign(defaultConfig, {
               {
                 title: '[ 2026-04-12 ] v2.0.1（可在支持IPv6网络直连看YouTube视频了）',
                 url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v2.0.1',
+              },
+              {
+                title: '[ 2026-02-02 ] v2.0.0.3（修复脚本插入的 BUG）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v2.0.0.3',
+              },
+              {
+                title: '[ 2025-12-31 ] v2.0.1-test（测试版：从 v2.0.0.2 继承，引入 free eye 插件、修复导入 BUG；版本号故意不合规以避免触发自动更新）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v2.0.1-test',
               },
               {
                 title: '[ 2025-05-15 ] v2.0.0.2',
@@ -543,6 +585,108 @@ Object.assign(defaultConfig, {
                 title: '[ 2022-03-14 ] v1.7.3',
                 url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.7.3',
               },
+              {
+                title: '[ 2021-12-06 ] v1.7.2',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.7.2',
+              },
+              {
+                title: '[ 2021-11-23 ] v1.7.1（升级 electron 版本，修复证书过期与 GitHub 静态资源加载问题）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.7.1',
+              },
+              {
+                title: '[ 2021-11-21 ] v1.7.0',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.7.0',
+              },
+            ],
+          },
+          {
+            title: 'v1.6.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2021-09-12 ] v1.6.2（默认配置支持远程更新，mac 顶栏图标跟随主题切换）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.6.2',
+              },
+              {
+                title: '[ 2021-08-21 ] v1.6.1（修复 Windows 下无法开机自启的问题）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.6.1',
+              },
+              {
+                title: '[ 2021-08-19 ] 1.6.0（支持 Ubuntu，Mac 应用名改为小写）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/1.6.0',
+              },
+            ],
+          },
+          {
+            title: 'v1.5.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2021-04-05 ] v1.5.1（支持增量更新）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.5.1',
+              },
+              {
+                title: '[ 2021-03-27 ] v1.5.0（新增模式切换与 IP 测速功能）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.5.0',
+              },
+            ],
+          },
+          {
+            title: 'v1.4.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2021-01-10 ] v1.4.0（支持 mac）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.4.0',
+              },
+            ],
+          },
+          {
+            title: 'v1.3.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2020-12-04 ] v1.3.1（新增 git 代理开关与增强功能）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.3.1',
+              },
+              {
+                title: '[ 2020-12-04 ] v1.3.0（新增 git 代理开关与增强功能）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.3.0',
+              },
+            ],
+          },
+          {
+            title: 'v1.2.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2020-11-29 ] v1.2.2（修复 win7 设置代理不生效、360 设置代理缓慢）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/v1.2.2',
+              },
+              {
+                title: '[ 2020-11-19 ] 1.2.0（修复 GitHub README 引用图片打不开，新增插入脚本功能）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/1.2.0',
+              },
+            ],
+          },
+          {
+            title: 'v1.1.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2020-11-14 ] 1.1.0（新增日志，修复升级后未完全退出导致的升级失败）',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/1.1.0',
+              },
+            ],
+          },
+          {
+            title: 'v1.0.x',
+            rowClass: 'title2',
+            children: [
+              {
+                title: '[ 2020-11-11 ] 1.0.2',
+                url: 'https://github.com/docmirror/dev-sidecar/releases/tag/1.0.2',
+              },
             ],
           },
         ],
@@ -553,6 +697,9 @@ Object.assign(defaultConfig, {
 Object.assign(defaultConfig.server, {
   intercepts: {
     'github.com': {
+      '.*': {
+        sni: 'baidu.com',
+      },
       '^(/[^/]+){2,}/?(\\?.*)?$': {
         tampermonkeyScript: 'https://ds-official-config.bestar.de5.net/tampermonkey.js',
         script: 'https://ds-official-config.bestar.de5.net/GithubEnhanced-High-Speed-Download.user.js',
@@ -562,13 +709,13 @@ Object.assign(defaultConfig.server, {
       '^(/[\\w-.]+){2,}/?(\\?.*)?$': null,
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.(jpg|jpeg|png|gif))(\\?.*)?$': {
         proxy: null,
-        sni: null,
+        sni: 'baidu.com',
         cacheDays: 365,
         desc: '仓库内图片重定向，缓存1年。',
       },
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.js)(\\?.*)?$': {
         proxy: null,
-        sni: null,
+        sni: 'baidu.com',
         responseReplace: {
           headers: {
             'content-type': 'application/javascript; charset=utf-8',
@@ -583,6 +730,9 @@ Object.assign(defaultConfig.server, {
       },
     },
     'github.githubassets.com': {
+      '.*': {
+        sni: 'baidu.com',
+      },
       '/assets/fakefile.js': {
         success: {
           script: ';',
@@ -654,10 +804,21 @@ Object.assign(defaultConfig.server, {
         sni: 'www.google.cn',
       },
     },
+    'fonts.googleapis.com': {
+      '.*': {
+        proxy: 'fonts.googleapis.cn',
+      },
+    },
     'ajax.googleapis.com': {
       '.*': {
         proxy: 'ajax.proxy.ustclug.org',
         desc: '根据2026年4月24日时访问https://mirrors.ustc.edu.cn 的说明，修正internal v202604122348中指向ajax.lug.ustc.edu.cn的配置',
+      },
+    },
+    'www.google.com': {
+      '/recaptcha/.*': {
+        proxy: 'www.recaptcha.net',
+        desc: 'reCAPTCHA 静态资源走国内镜像，与下方 www.gstatic.com 的同源规则配套',
       },
     },
     '^(?!.*(translate-pa).google(?:apis|usercontent)?.com).*google(?:apis|usercontent)?.com$': {
@@ -692,31 +853,6 @@ Object.assign(defaultConfig.server, {
       '.*': {
         sni: 'microsoft.com',
         verifyHost: 'graph.windows.net',
-      },
-    },
-    'www.docker.com': {
-      '.*': {
-        sni: 'www.docker.com',
-      },
-    },
-    'login.docker.com': {
-      '.*': {
-        sni: 'login.docker.com',
-      },
-    },
-    'download.docker.com': {
-      '.*': {
-        sni: 'download.docker.com',
-      },
-    },
-    'hub.docker.com': {
-      '.*': {
-        sni: 'none',
-      },
-    },
-    '*.docker.com': {
-      '.*': {
-        sni: 'www.docker.com',
       },
     },
     '*.pixiv.org': {
@@ -973,25 +1109,6 @@ Object.assign(defaultConfig.server, {
       '185.199.109.133': true,
       '185.199.110.133': true,
     },
-    'hub.docker.com': {
-      '144.34.172.106': true,
-      '69.63.207.139': false,
-      '47.236.233.96': false,
-      '54.156.14.194': null,
-      '54.208.73.48': null,
-      '100.29.167.200': null,
-      '44.221.37.199': null,
-      '52.44.227.212': null,
-      '54.156.140.159': null,
-    },
-    'sessions-bugsnag.docker.com': {
-      '54.156.14.194': true,
-      '54.208.73.48': true,
-      '100.29.167.200': true,
-      '44.221.37.199': null,
-      '52.44.227.212': null,
-      '54.156.140.159': null,
-    },
     'i.pximg.net': {
       '210.140.139.132': true,
       '210.140.139.137': true,
@@ -1162,6 +1279,18 @@ Object.assign(defaultConfig.server, {
       '23.51.62.114': true,
       '23.55.98.103': true,
     },
+    '*x.com': {
+      '172.67.172.22': true,
+    },
+    '*twimg.com': {
+      '172.67.172.22': true,
+    },
+    '*twitter.com': {
+      '172.67.172.22': true,
+    },
+    '*t.co': {
+      '172.67.172.22': true,
+    },
     'external-content.duckduckgo.com': {
       '20.43.160.189': true,
     },
@@ -1207,6 +1336,12 @@ Object.assign(defaultConfig.server, {
   },
   dns: {
     providers: {
+      'local': {
+        server: '127.0.0.1',
+      },
+      'aliyun': {
+        server: '223.5.5.5',
+      },
       'safe360': {
         server: 'tls://dot.360.cn',
         forSNI: true,
@@ -1223,8 +1358,14 @@ Object.assign(defaultConfig.server, {
         server: 'https://cloudflare-dns.com/dns-query',
         sni: 'baidu.com',
       },
-      'quad9': {
+      'quad9-ip': {
         server: 'https://9.9.9.9/dns-query',
+      },
+      'cf-ip': {
+        server: 'https://1.1.1.1/dns-query',
+      },
+      'rubyfish': {
+        server: 'https://rubyfish.cn/dns-query',
       },
     },
     mapping: {
@@ -1234,10 +1375,7 @@ Object.assign(defaultConfig.server, {
       '*.jetbrains.com': 'cf-DoT',
       '*.azureedge.net': 'cf-DoT',
       '*.stackoverflow.com': 'cf-DoT',
-      '*.github.com': 'cf-DoT',
-      '*github*.com': 'cf-DoT',
       '*.github.io': 'cf-DoT',
-      '*.docker.com': 'cf-DoT',
       '*.electronjs.org': 'cf-DoT',
       '*.amazonaws.com': 'cf-DoT',
       '*.yarnpkg.com': 'cf-DoT',
@@ -1253,9 +1391,6 @@ Object.assign(defaultConfig.server, {
       '*.onesignal.com': 'cf-DoT',
       '*.iubenda.com': 'cf-DoT',
       '*.brave.com': 'cf-DoT',
-      '*duckduckgo.com': 'cf-DoT',
-      '*.gstatic.com': 'quad9',
-      '*.googleapis.com': 'quad9',
     },
     familyMapping: {
       '*.xn--ngstr-lra8j.com': '6',
@@ -1292,16 +1427,7 @@ Object.assign(defaultConfig.server, {
       interval: 60000,
       hostnameList: [
         'google.com',
-        'zh.wikipedia.org',
-        'steamgames.com',
-        'epicgames-download1-1251447533.file.myqcloud.com',
-        'store.steampowered.com',
-        'community.akamai.steamstatic.com',
-        'cdn.akamai.steamstatic.com',
-        'steamcdn-a.akamaihd.net',
-        'store.akamai.steamstatic.com',
-        'steamcommunity.com',
-        'api.steampowered.com',
+        'github.com',
       ],
       dnsProviders: [
         'cf-DoT',
@@ -1310,17 +1436,26 @@ Object.assign(defaultConfig.server, {
     },
     ech: {
       domains: [
-        '*.pixiv.net',
-        'pixiv.net',
-        'chatgpt.com',
+        '*t.co',
+        '*twitter.com',
+        '*twimg.com',
+        '*sci-hub.pub',
+        '*x.com',
+        '*docker.com',
+        '*pixiv.net',
+        '*chatgpt.com',
         '*civitai.com',
-        '*.ldstatic.com',
+        '*ldstatic.com',
         'civitai.com',
-        '*.linux.do',
-        '*.greasyfork.org',
+        '*linux.do',
+        '*greasyfork.org',
       ],
       preSetIpDomains: [
-        '*.ldstatic.com',
+        '*ldstatic.com',
+        '*t.co',
+        '*twitter.com',
+        '*twimg.com',
+        '*x.com',
       ],
       dns: 'cf-DoH',
       enabled: true,
@@ -1333,11 +1468,19 @@ Object.assign(defaultConfig.server, {
       tryAllProviders: true,
       parallelDelay: 200,
     },
+    nat64: {
+      enabled: true,
+      prefix: '',
+      domains: [
+        '*chatgpt.com',
+      ],
+      dns: 'cf-DoH',
+    },
   },
 })
 Object.assign(defaultConfig.app.metaInfo, {
-  version: 202610031740,
-  updateLog: '新增 ech 配置',
+  version: 202610060150,
+  updateLog: '去除自带nat64默认前缀需要用户自行查询',
 })
 /* eslint-enable no-template-curly-in-string */
 // <<< SYNC:OFFICIAL-FALLBACK:END

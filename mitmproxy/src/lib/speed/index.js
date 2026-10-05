@@ -93,7 +93,10 @@ function action (event) {
   if (event.key === 'reTest') {
     reSpeedTest()
   } else if (event.key === 'getList') {
+    // IPC 通道可能已关闭（父进程退出，CLI 场景常见）：直接 send 会抛 ERR_IPC_CHANNEL_CLOSED
+    if (process.connected && typeof process.send === 'function') {
     process.send({ type: 'speed', event: { key: 'getList', value: getAllSpeedTester() } })
+    }
   }
 }
 module.exports = {

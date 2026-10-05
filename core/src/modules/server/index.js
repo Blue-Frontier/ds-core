@@ -7,6 +7,7 @@ const event = require('../../event')
 const status = require('../../status')
 const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const log = require('../../utils/util.log.core')
+const { buildRemoteConfigFetchRules } = require('../../config/remote-config-rule')
 
 let server = null
 function fireStatus (status) {
@@ -29,6 +30,55 @@ function onceExit (child) {
     child.once('exit', () => resolve(true))
   })
 }
+
+
+/**
+ * 把「配置拉取」的默认对抗规则合并进 serverConfig（必须在代理启动之前调用）。
+ *
+ * 规则数据来自 `config/remote-config-rule.js`（可被 `app.remoteConfig.fetchRule` 覆盖），
+ * 合并原则：intercepts 不覆盖已有规则（用户/插件的优先）；dns.mapping 与 preSetIpList
+ * 只补缺失项，除非 fetchRule 显式指定。
+ *
+ * @param {object} allConfig    合并后的完整配置
+ * @param {object} serverConfig serverConfig（会被就地修改）
+ */
+function applyRemoteConfigFetchRules (allConfig, serverConfig) {
+  const rules = buildRemoteConfigFetchRules({
+    remoteConfig: allConfig && allConfig.app && allConfig.app.remoteConfig,
+    providers: serverConfig.dns.providers,
+  })
+
+  for (const [name, conf] of Object.entries(rules.providers)) {
+    if (serverConfig.dns.providers[name] == null) {
+      serverConfig.dns.providers[name] = conf
+      log.info(`已补齐 DNS provider: ${name}`)
+    }
+  }
+  for (const [host, rule] of Object.entries(rules.intercepts)) {
+    if (serverConfig.intercepts[host] == null) {
+      serverConfig.intercepts[host] = rule
+    }
+  }
+  if (serverConfig.dns.mapping == null) {
+    serverConfig.dns.mapping = {}
+  }
+  for (const [host, provider] of Object.entries(rules.dnsMapping)) {
+    serverConfig.dns.mapping[host] = provider
+  }
+  if (serverConfig.preSetIpList == null) {
+    serverConfig.preSetIpList = {}
+  }
+  for (const [host, ipMap] of Object.entries(rules.preSetIpList)) {
+    if (serverConfig.preSetIpList[host] == null) {
+      serverConfig.preSetIpList[host] = ipMap
+    }
+  }
+
+  for (const item of rules.applied) {
+    log.info(`配置拉取对抗规则: ${item.hostname} -> sni=${item.sni}, dns=${item.dns}, 预设IP=${item.preSetIpCount} 条`)
+  }
+}
+
 const serverApi = {
   async startup () {
     if (config.get().server.startup) {
@@ -52,6 +102,10 @@ const serverApi = {
 
     const intercepts = serverConfig.intercepts
     const dnsMapping = serverConfig.dns.mapping
+
+    // 配置拉取的默认对抗规则：必须在代理启动之前注入（规则在启动时被预编译成正则表）。
+    // 放在插件合并之前，使插件/用户已有的规则仍然优先。
+    applyRemoteConfigFetchRules(allConfig, serverConfig)
 
     if (allConfig.plugin) {
       lodash.each(allConfig.plugin, (value) => {
@@ -123,7 +177,9 @@ const serverApi = {
       process: serverProcess,
       port: serverConfig.port,
       close () {
+        if (serverProcess.connected) {
         serverProcess.send({ type: 'action', event: { key: 'close' } })
+      }
       },
     }
     serverProcess.on('beforeExit', (code) => {
@@ -185,12 +241,16 @@ const serverApi = {
   },
   getSpeedTestList () {
     if (server) {
+      if (server.process && server.process.connected) {
       server.process.send({ type: 'speed', event: { key: 'getList' } })
+    }
     }
   },
   reSpeedTest () {
     if (server) {
+      if (server.process && server.process.connected) {
       server.process.send({ type: 'speed', event: { key: 'reTest' } })
+    }
     }
   },
 }
