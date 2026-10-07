@@ -6,7 +6,6 @@ const _ = require('lodash')
 const forge = require('node-forge')
 const log = require('../../../utils/util.log.server')
 const config = require('../common/config')
-// const colors = require('colors')
 
 const utils = exports
 const pki = forge.pki
