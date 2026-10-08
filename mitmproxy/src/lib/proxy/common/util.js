@@ -49,6 +49,9 @@ function getTimeoutConfig (hostname, serverSetting) {
     timeout: timeoutConfig.timeout || serverSetting.defaultTimeout || 60000,
     // 空闲 keep-alive 过长容易复用到半死连接；太短又会掐断 git 大包慢传
     keepAliveTimeout: timeoutConfig.keepAliveTimeout || serverSetting.defaultKeepAliveTimeout || 15000,
+    // 空闲 socket 回收时间：默认 5s（与 ECH 专用 5s 对齐，避免死连接在池里躺太久被中间设备静默掐断后还被复用），
+    // 可按域名通过 timeoutMapping.freeSocketTimeout 调长（极少数真有慢空闲的场景）
+    freeSocketTimeout: timeoutConfig.freeSocketTimeout || 5000,
     allowTls12: serverSetting.allowTls12 === true,
     tlsVersion,
   }
@@ -67,7 +70,7 @@ function createHttpsAgent (timeoutConfig, verifySsl) {
       keepAlive: true,
       timeout: timeoutConfig.timeout,
       keepAliveTimeout: timeoutConfig.keepAliveTimeout,
-      freeSocketTimeout: Math.min(timeoutConfig.keepAliveTimeout || 10000, 15000),
+      freeSocketTimeout: timeoutConfig.freeSocketTimeout,
       rejectUnauthorized: verifySsl,
       minVersion,
       maxVersion,
@@ -77,7 +80,7 @@ function createHttpsAgent (timeoutConfig, verifySsl) {
       keepAlive: true,
       timeout: timeoutConfig.timeout,
       keepAliveTimeout: timeoutConfig.keepAliveTimeout,
-      freeSocketTimeout: Math.min(timeoutConfig.keepAliveTimeout || 10000, 15000),
+      freeSocketTimeout: timeoutConfig.freeSocketTimeout,
       rejectUnauthorized: false,
       minVersion,
       maxVersion,
@@ -96,7 +99,7 @@ function createHttpAgent (timeoutConfig) {
       keepAlive: true,
       timeout: timeoutConfig.timeout,
       keepAliveTimeout: timeoutConfig.keepAliveTimeout,
-      freeSocketTimeout: Math.min(timeoutConfig.keepAliveTimeout || 10000, 15000),
+      freeSocketTimeout: timeoutConfig.freeSocketTimeout,
     })
     log.info('创建 HttpAgent 成功, timeoutConfig:', timeoutConfig)
   }

@@ -337,6 +337,13 @@ class EchHttpsAgent extends ProxyHttpsAgent {
       .catch((error) => {
         log.warn(`[ECH] 使用ECH连接失败，回退原生TLS: ${hostname}, error: ${error.message}`)
         this.stat.fallback++
+        // 原生回退也失败时，把该(域名,IP)喂给 ECH DNS 的 IP 优选（countEchIp），
+        // 让 ECH 专用 DNS / 预设 IP / NAT64 把该 IP 降权，下次切到下一个 IP。
+        // 否则 ECH 不可用退化到原生时，原生撞死 IP 不会反馈给 ECH DNS 优选，
+        // 优选会一直把同一个坏 IP 排第一 → 间歇超时，需重启 DS 才清掉。
+        if (error && error.resolvedIp) {
+          dnsUtil.countEchIp(this.dnsConfig, hostname, error.resolvedIp, true, '原生TLS回退失败，切换IP')
+        }
         let socket = null
         try {
           socket = this.createNativeConnection(options, callback)
