@@ -170,7 +170,7 @@ const defaultConfig = {
 // >>> SYNC:OFFICIAL-FALLBACK:BEGIN
 // 「internal 底本」：官方配置的规则类节点，由 _script/sync-official-config.mjs 在构建时自动更新，请勿手改。
 // 来源地址：https://ds-official-config.bestar.de5.net/remote_config.json5
-// 来源版本：202610060150（去除自带nat64默认前缀需要用户自行查询）
+// 来源版本：202610070050（修复油叉安装域名错误的问题）
 // 下载失败时脚本不会改动本区块，即保留上一次的同步结果。
 // 用 Object.assign 整体替换（不是深合并），这样官方「删掉」的键也会跟着消失。
 /* eslint-disable no-template-curly-in-string -- 官方配置里存在 ${...} 形式的普通字符串（如代理目标），并非模板串 */
@@ -697,9 +697,6 @@ Object.assign(defaultConfig, {
 Object.assign(defaultConfig.server, {
   intercepts: {
     'github.com': {
-      '.*': {
-        sni: 'baidu.com',
-      },
       '^(/[^/]+){2,}/?(\\?.*)?$': {
         tampermonkeyScript: 'https://ds-official-config.bestar.de5.net/tampermonkey.js',
         script: 'https://ds-official-config.bestar.de5.net/GithubEnhanced-High-Speed-Download.user.js',
@@ -709,13 +706,13 @@ Object.assign(defaultConfig.server, {
       '^(/[\\w-.]+){2,}/?(\\?.*)?$': null,
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.(jpg|jpeg|png|gif))(\\?.*)?$': {
         proxy: null,
-        sni: 'baidu.com',
+        sni: null,
         cacheDays: 365,
         desc: '仓库内图片重定向，缓存1年。',
       },
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.js)(\\?.*)?$': {
         proxy: null,
-        sni: 'baidu.com',
+        sni: null,
         responseReplace: {
           headers: {
             'content-type': 'application/javascript; charset=utf-8',
@@ -730,9 +727,6 @@ Object.assign(defaultConfig.server, {
       },
     },
     'github.githubassets.com': {
-      '.*': {
-        sni: 'baidu.com',
-      },
       '/assets/fakefile.js': {
         success: {
           script: ';',
@@ -797,6 +791,11 @@ Object.assign(defaultConfig.server, {
     '*.windows.net': {
       '.*': {
         sni: 'baidu.com',
+      },
+    },
+    '(userlocations|locationhistory-pa|locationhistoryaggregates-pa|locationhistoryplacedetails-pa).googleapis.com': {
+      '.*': {
+        abort: true,
       },
     },
     '*.googleapis.com': {
@@ -918,6 +917,11 @@ Object.assign(defaultConfig.server, {
       '.*': {
         sni: 'huggingface.cn',
         verifyHost: 'huggingface.cn',
+      },
+    },
+    'update.greasyfork.org': {
+      '.*': {
+        sni: 'baidu.com',
       },
     },
     'cn.vuejs.org': {
@@ -1149,6 +1153,7 @@ Object.assign(defaultConfig.server, {
     },
     '(*account*|scholar).google.com': {
       '172.217.204.206': true,
+      '142.251.189.206': true,
     },
     '^(?!fonts).*(with)?google(apis|usercontent)?.com.*$': {
       '8.137.102.117': false,
@@ -1448,7 +1453,7 @@ Object.assign(defaultConfig.server, {
         '*ldstatic.com',
         'civitai.com',
         '*linux.do',
-        '*greasyfork.org',
+        'greasyfork.org',
       ],
       preSetIpDomains: [
         '*ldstatic.com',
@@ -1479,8 +1484,8 @@ Object.assign(defaultConfig.server, {
   },
 })
 Object.assign(defaultConfig.app.metaInfo, {
-  version: 202610060150,
-  updateLog: '去除自带nat64默认前缀需要用户自行查询',
+  version: 202610070050,
+  updateLog: '修复油叉安装域名错误的问题',
 })
 /* eslint-enable no-template-curly-in-string */
 // <<< SYNC:OFFICIAL-FALLBACK:END
