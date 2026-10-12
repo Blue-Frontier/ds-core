@@ -170,7 +170,7 @@ const defaultConfig = {
 // >>> SYNC:OFFICIAL-FALLBACK:BEGIN
 // 「internal 底本」：官方配置的规则类节点，由 _script/sync-official-config.mjs 在构建时自动更新，请勿手改。
 // 来源地址：https://ds-official-config.bestar.de5.net/remote_config.json5
-// 来源版本：202610070050（修复油叉安装域名错误的问题）
+// 来源版本：202610122340（修复部分规则匹配过宽的问题）
 // 下载失败时脚本不会改动本区块，即保留上一次的同步结果。
 // 用 Object.assign 整体替换（不是深合并），这样官方「删掉」的键也会跟着消失。
 /* eslint-disable no-template-curly-in-string -- 官方配置里存在 ${...} 形式的普通字符串（如代理目标），并非模板串 */
@@ -698,6 +698,7 @@ Object.assign(defaultConfig.server, {
   intercepts: {
     'github.com': {
       '^(/[^/]+){2,}/?(\\?.*)?$': {
+        sni: 'baidu.com',
         tampermonkeyScript: 'https://ds-official-config.bestar.de5.net/tampermonkey.js',
         script: 'https://ds-official-config.bestar.de5.net/GithubEnhanced-High-Speed-Download.user.js',
         remark: '注：上面所使用的脚本地址，为高速镜像地址。',
@@ -705,20 +706,21 @@ Object.assign(defaultConfig.server, {
       },
       '^(/[\\w-.]+){2,}/?(\\?.*)?$': null,
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.(jpg|jpeg|png|gif))(\\?.*)?$': {
-        proxy: null,
-        sni: null,
+        sni: 'baidu.com',
         cacheDays: 365,
         desc: '仓库内图片重定向，缓存1年。',
       },
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.js)(\\?.*)?$': {
-        proxy: null,
-        sni: null,
+        sni: 'baidu.com',
         responseReplace: {
           headers: {
             'content-type': 'application/javascript; charset=utf-8',
           },
         },
         desc: '仓库内脚本，设置响应头Content-Type。作用：方便script拦截器直接使用，避免引起跨域问题和脚本内容限制问题。',
+      },
+      '.*': {
+        sni: 'baidu.com',
       },
     },
     'api.github.com': {
@@ -735,19 +737,8 @@ Object.assign(defaultConfig.server, {
       },
       '^(/[^/]+)*/[^./]+\\.(svg|png|gif|jpg|jpeg|ico|js|css)(\\?.*)?$': {
         cacheDays: 365,
-        desc: '图片、JS文件、CSS文件，缓存1年',
-      },
-      '.*.backup': {
-        desc: 'github.com域名下，该请求已经不存在，此配置暂时先备份掉。',
-        proxy: 'github.com',
         sni: 'baidu.com',
-        responseReplace: {
-          headers: {
-            'access-control-allow-origin': '*',
-            'cross-origin-resource-policy': 'cross-origin',
-            'set-cookie': '[remove]',
-          },
-        },
+        desc: '图片、JS文件、CSS文件，缓存1年',
       },
     },
     'opengraph.githubassets.com': {
@@ -929,9 +920,54 @@ Object.assign(defaultConfig.server, {
         sni: 'vuejs.org',
       },
     },
+    '*z-library.sk': {
+      '.*': {
+        sni: 'baidu.com',
+      },
+    },
+    '*z-lib.help': {
+      '.*': {
+        sni: 'baidu.com',
+      },
+    },
+    '^.*(wikipedia|wikimedia|wikinews|wiktionary|wikiversity|wikidata|wikiquote|wikivoyage|wikifunctions|wikibooks).org$': {
+      '.*': {
+        sni: 'mediawiki.org',
+      },
+    },
+    '*w.wiki': {
+      '.*': {
+        sni: 'mediawiki.org',
+      },
+    },
+    '*reddit.com': {
+      '.*': {
+        sni: 'baidu.com',
+      },
+    },
+    '*redditstatic.com': {
+      '.*': {
+        sni: 'baidu.com',
+      },
+    },
+    'redd.it': {
+      '.*': {
+        redirect: 'www.reddit.com',
+      },
+    },
+    '*redd.it': {
+      '.*': {
+        sni: 'baidu.com',
+      },
+    },
+    '*redditmedia.com': {
+      '.*': {
+        sni: 'baidu.com',
+      },
+    },
     '*steamcommunity.com': {
       '^(?!/discussions|/Profile|/app.*/discussions).*$': {
-        sni: 'www.baidu.com',
+        sni: 'baidu.com',
         desc: '讨论区锁区,考虑不拦截丢给彩蛋',
       },
     },
@@ -941,34 +977,34 @@ Object.assign(defaultConfig.server, {
         desc: 'steam社区数据不能也不需调整sni,直接直连',
       },
     },
-    '*.steampowered.com': {
+    '^(store|checkout).steampowered.com$': {
       '.*': {
-        sni: 'www.baidu.com',
+        sni: 'baidu.com',
       },
     },
     'external-content.duckduckgo.com': {
       '.*': {
-        sni: 'www.baidu.com',
+        sni: 'baidu.com',
       },
     },
     '*duckduckgo.com': {
       '.*': {
-        sni: 'www.baidu.com',
+        sni: 'baidu.com',
       },
     },
     '*dropbox.com': {
       '.*': {
-        sni: 'www.baidu.com',
+        sni: 'baidu.com',
       },
     },
     '*f-droid.org': {
       '.*': {
-        sni: 'www.baidu.com',
+        sni: 'baidu.com',
       },
     },
     'fdroid.org': {
       '.*': {
-        sni: 'www.baidu.com',
+        sni: 'baidu.com',
       },
     },
     '*apkmirror.com': {
@@ -1246,6 +1282,30 @@ Object.assign(defaultConfig.server, {
     '*z-lib.help': {
       '176.123.7.105': true,
     },
+    'upload.wikimedia.org': {
+      '208.80.153.240': true,
+      '185.15.58.240': true,
+    },
+    '^.*(wikipedia|wikimedia|wikinews|wiktionary|wikiversity|wikidata|wikiquote|wikivoyage|wikifunctions).org$': {
+      '208.80.153.224': true,
+      '185.15.58.224': true,
+    },
+    '*w.wiki': {
+      '208.80.153.224': true,
+      '185.15.58.224': true,
+    },
+    '*reddit.com': {
+      '146.75.33.140': true,
+    },
+    '*redditstatic.com': {
+      '146.75.33.140': true,
+    },
+    '*redd.it': {
+      '146.75.33.140': true,
+    },
+    '*redditmedia.com': {
+      '146.75.33.140': true,
+    },
     'community.cloudflare.steamstatic.com': {
       '23.209.46.70': true,
       '104.18.42.105': true,
@@ -1284,7 +1344,7 @@ Object.assign(defaultConfig.server, {
       '23.51.62.114': true,
       '23.55.98.103': true,
     },
-    '*x.com': {
+    '^(.+\\.)?x\\.com$': {
       '172.67.172.22': true,
     },
     '*twimg.com': {
@@ -1396,6 +1456,7 @@ Object.assign(defaultConfig.server, {
       '*.onesignal.com': 'cf-DoT',
       '*.iubenda.com': 'cf-DoT',
       '*.brave.com': 'cf-DoT',
+      '*.vsassets.io': 'cf-DoT',
     },
     familyMapping: {
       '*.xn--ngstr-lra8j.com': '6',
@@ -1426,6 +1487,7 @@ Object.assign(defaultConfig.server, {
       '*duckduckgo.com': '4',
       '*.gstatic.com': '4',
       '*.googleapis.com': '4',
+      '*.vsassets.io': '4',
     },
     speedTest: {
       enabled: true,
@@ -1445,7 +1507,7 @@ Object.assign(defaultConfig.server, {
         '*twitter.com',
         '*twimg.com',
         '*sci-hub.pub',
-        '*x.com',
+        '^(.+.)?x.com$',
         '*docker.com',
         '*pixiv.net',
         '*chatgpt.com',
@@ -1460,7 +1522,7 @@ Object.assign(defaultConfig.server, {
         '*t.co',
         '*twitter.com',
         '*twimg.com',
-        '*x.com',
+        '^(.+.)?x.com$',
       ],
       dns: 'cf-DoH',
       enabled: true,
@@ -1484,8 +1546,8 @@ Object.assign(defaultConfig.server, {
   },
 })
 Object.assign(defaultConfig.app.metaInfo, {
-  version: 202610070050,
-  updateLog: '修复油叉安装域名错误的问题',
+  version: 202610122340,
+  updateLog: '修复部分规则匹配过宽的问题',
 })
 /* eslint-enable no-template-curly-in-string */
 // <<< SYNC:OFFICIAL-FALLBACK:END
