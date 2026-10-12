@@ -67,7 +67,7 @@ module.exports = {
       rawRequestHandler(req, res, ssl)
     }
 
-    const upgradeHandler = createUpgradeHandler(setting)
+    const upgradeHandler = createUpgradeHandler(setting, externalProxy, dnsConfig, createIntercepts)
 
     const fakeServersCenter = createFakeServerCenter({
       maxLength,
