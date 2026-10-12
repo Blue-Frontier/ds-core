@@ -1,6 +1,7 @@
 const log = require('../../utils/util.log.server')
 
-const DEFAULT_PROXY_PORTS = [31180, 31181]
+// 单端口代理：HTTP 与 HTTPS CONNECT 共用同一端口（默认 31181）
+const DEFAULT_PROXY_PORTS = [31181]
 const ENTRY_TTL = 60 * 1000
 const BLOCKED_HOST_TTL = 5 * 60 * 1000
 const DOMAIN_MAP_MAX = 5000

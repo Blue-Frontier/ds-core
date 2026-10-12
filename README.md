@@ -13,7 +13,7 @@ DevSidecar 内核仓库（**三位一体**之 core）：`core` + `mitmproxy`。
 | **ds-gui**（后续） | 桌面 GUI | https://github.com/Blue-Frontier/ds-gui |
 | 历史主仓 | 迁移前 monorepo（只读参考） | https://github.com/docmirror/dev-sidecar |
 
-用户配置目录与端口约定三端一致：`~/.dev-sidecar/`，HTTP **31180** / HTTPS **31181**。
+用户配置目录与端口约定三端一致：`~/.dev-sidecar/`，代理端口默认 **31181**（单端口，HTTP 代理与 HTTPS CONNECT 共用）。
 
 ## 包名
 

@@ -33,7 +33,7 @@ pnpm --filter @blue-frontier/mitmproxy test -- test/regex.test.js
 - 日志：`core/src/utils/util.logger.js`；文件默认在 `~/.dev-sidecar/logs/`
 - 用户配置：`~/.dev-sidecar/config.json`（兼容旧 `config.json5`）
 - CA：`~/.dev-sidecar/dev-sidecar.ca.crt`
-- 默认端口：HTTP 31180，HTTPS 31181 — **不要随意改默认值**
+- 默认端口：代理端口 **31181**（单端口，HTTP 代理与 HTTPS CONNECT 共用）— **不要随意改默认值**
 
 ## 提交与推送
 
