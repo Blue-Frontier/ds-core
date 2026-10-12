@@ -101,7 +101,7 @@ function getAuthorityKeyIdentifierExt (caCert) {
       const skiExt = caCert.getExtension && caCert.getExtension('subjectKeyIdentifier')
       if (skiExt && skiExt.subjectKeyIdentifier) {
         let ski = skiExt.subjectKeyIdentifier
-        if (typeof ski === 'string' && /^[0-9a-fA-F]+$/.test(ski) && ski.length % 2 === 0) {
+        if (typeof ski === 'string' && /^[0-9a-f]+$/i.test(ski) && ski.length % 2 === 0) {
           // forge 扩展里可能是 hex 字符串，需转为二进制再进 DER
           ski = Buffer.from(ski, 'hex').toString('binary')
         } else if (ski && typeof ski.getBytes === 'function') {

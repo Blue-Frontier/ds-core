@@ -105,9 +105,10 @@ function ensurePrivateKeyStored (record) {
 }
 
 let cached = null
+let pendingEnsure = null
 
 function getIdentity () {
-  if (cached && cached.privateKey) {
+  if (cached) {
     return cached
   }
   cached = loadOrCreateIdentity()
@@ -117,7 +118,16 @@ function getIdentity () {
 /** 异步：保证私钥在 SecretStore 中，并返回 identity */
 async function ensureIdentity () {
   const rec = getIdentity()
-  await ensurePrivateKeyStored(rec)
+  // 并发调用共享同一次初始化。原先在 await 期间缓存会被 getIdentity() 重建
+  // （旧判断条件依赖 privateKey，此时尚未写入），致后续 getPrivateKeyObject() 读到的
+  // 记录与 ensureIdentity() 填充的不是同一个而报“private key not loaded”；
+  // 私钥缺失时并发还会各自生成新身份，导致公钥/nodeId 漂移。
+  if (!pendingEnsure) {
+    pendingEnsure = ensurePrivateKeyStored(rec).finally(() => {
+      pendingEnsure = null
+    })
+  }
+  await pendingEnsure
   return rec
 }
 
