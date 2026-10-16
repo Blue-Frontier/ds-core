@@ -130,20 +130,31 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
     // 兜底：若整个流程未写出任何响应（例如模拟器/WHPX 干扰导致上游挂起且未触发 error），
     // 超时后强制返回错误页，避免浏览器一直显示"未发送任何数据"
     let responded = false
+    let responseStarted = false
+    let lastActivity = Date.now()
     let emptyGuard = null
+    const markActivity = () => {
+      lastActivity = Date.now()
+    }
+    const write = res.write
+    res.write = function (...args) {
+      markActivity()
+      return write.apply(this, args)
+    }
     const markResponded = () => {
       responded = true
       if (emptyGuard) {
-        clearTimeout(emptyGuard)
+        clearInterval(emptyGuard)
         emptyGuard = null
       }
     }
     res.on('finish', markResponded)
     res.on('close', markResponded)
-    emptyGuard = setTimeout(() => {
-      if (responded || res.writableEnded)
+    emptyGuard = setInterval(() => {
+      if (responded || res.writableEnded || Date.now() - lastActivity < 60000)
         return
-      log.error(`请求无响应，强制返回 504: ${url}`)
+      const stalled = responseStarted || res.headersSent
+      log.error(`请求无响应，强制返回 504${stalled ? '（响应流停滞）' : ''}: ${url}`)
       try {
         if (!res.headersSent) {
           res.writeHead(504, { 'Content-Type': 'text/plain; charset=utf-8', 'DS-Error': 'empty-response-guard' })
@@ -154,7 +165,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
           res.destroy()
         } catch { /* ignore */ }
       }
-    }, 60000)
+    }, 5000)
     emptyGuard.unref && emptyGuard.unref()
 
     const rOptions = commonUtil.getOptionsFromRequest(req, ssl, externalProxy, setting, compatibleConfig)
@@ -286,6 +297,7 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
         onFree()
 
         function onFree () {
+          markActivity()
           url = `${rOptions.method} ➜ ${rOptions.protocol}//${rOptions.hostname}:${rOptions.port}${rOptions.path}`
           const start = Date.now()
           log.info('发起代理请求:', url, (rOptions.servername ? `, sni: ${rOptions.servername}` : ''), ', headers:', jsonApi.stringify2(rOptions.headers))
@@ -371,7 +383,6 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
 
           res.setHeader('DS-Proxy-Request-Family', rOptions.family || 4)
           // 响应已开始后禁止再 destroy 上游（否则会掐断流式响应）
-          let responseStarted = false
           proxyReq = (rOptions.protocol === 'https:' ? https : http).request(rOptions, (proxyRes) => {
             const cost = Date.now() - start
             if (rOptions.protocol === 'https:') {
@@ -390,8 +401,9 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
               countSlow(isDnsIntercept, `代理请求成功但太慢, cost: ${cost} ms > ${MAX_SLOW_TIME} ms`)
             }
 
-            // 已收到响应头：关掉请求级空闲超时，避免长流式（Gemini/SSE）中途被掐断
+            // 已收到响应头：刷新活动时间，长流式只受数据停滞超时保护
             responseStarted = true
+            markActivity()
             try {
               proxyReq.setTimeout(0)
             } catch {
