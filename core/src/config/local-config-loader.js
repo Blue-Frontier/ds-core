@@ -93,24 +93,15 @@ function getConfigFromFiles (userConfig, defaultConfig) {
   const personalRemoteConfig = getRemoteConfig('_personal')
   const shareRemoteConfig = getRemoteConfig()
 
-  // 完整配置对象（默认/共享/个人远程/用户）里的显式 null 是「占位/清空」语义，
-  // 直接 doMerge 会压掉目标里用户已有的条目（docmirror/dev-sidecar#728）。
-  // 这里先把源副本里所有 null 删掉再合并；doDiff 产出的「删除标记 null」走独立链路，不受影响。
-  const stripNulls = (obj) => {
-    const copy = lodash.cloneDeep(obj)
-    mergeApi.deleteNullItems(copy)
-    return copy
-  }
-  mergeApi.doMerge(merged, stripNulls(personalRemoteConfig)) // 先合并一次个人远程配置，使配置顺序在前
-  mergeApi.doMerge(merged, stripNulls(shareRemoteConfig)) // 先合并一次共享远程配置，使配置顺序在前
-  mergeApi.doMerge(merged, stripNulls(defaultConfig)) // 合并默认配置，顺序排在最后
-  mergeApi.doMerge(merged, stripNulls(shareRemoteConfig)) // 再合并一次共享远程配置，使配置生效
-  mergeApi.doMerge(merged, stripNulls(personalRemoteConfig)) // 再合并一次个人远程配置，使配置生效
+  mergeApi.doMerge(merged, personalRemoteConfig) // 先合并一次个人远程配置，使配置顺序在前
+  mergeApi.doMerge(merged, shareRemoteConfig) // 先合并一次共享远程配置，使配置顺序在前
+  mergeApi.doMerge(merged, defaultConfig) // 合并默认配置，顺序排在最后
+  mergeApi.doMerge(merged, shareRemoteConfig) // 再合并一次共享远程配置，使配置生效
+  mergeApi.doMerge(merged, personalRemoteConfig) // 再合并一次个人远程配置，使配置生效
 
   if (userConfig != null) {
-    mergeApi.doMerge(merged, stripNulls(userConfig)) // 再合并一次用户配置，使用户配置重新生效
+    mergeApi.doMerge(merged, userConfig) // 再合并一次用户配置，使用户配置重新生效
   }
-
   // 删除为null及[delete]的项
   mergeApi.deleteNullItems(merged)
 
