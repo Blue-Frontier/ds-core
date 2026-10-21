@@ -13,7 +13,7 @@ function doDiff (oldObj, newObj) {
   }
 
   // 临时的对象，用于找出被删除的数据
-  const tempObj = { ...oldObj }
+  const tempObj = lodash.cloneDeep(oldObj)
   // 删除空项，使差异对象更干净一些，体现出用户自定义内容
   deleteNullItems(tempObj)
 
