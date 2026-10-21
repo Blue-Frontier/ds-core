@@ -332,6 +332,9 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
                 // ECH域名：ECH专用DNS解析不出可用IP时回退到预设IP，并在缓存退化为域名兜底项时重新尝试真实IP
                 resetOnHostnameFallback: isEchDomain,
                 preSetDns: ignorePreSetIp ? dnsConfig.dnsMap.PreSet : null,
+                // 主 DNS（如「预设IP」）解析不出结果时，用其它提供方兜底，避免直接落到常常失败的
+                // 系统 DNS（EAI_AGAIN），也让自动重试不再重复同一条失败链路
+                fallbackDnsList: DnsUtil.getFallbackDnsList(dnsConfig, dnsAndFamily.dns),
               })
               if (dnsAndFamily.family === 6) {
                 rOptions.family = 6
@@ -340,14 +343,14 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
               dnsHeaderLabel = dnsAndFamily.dns.dnsName === '预设IP' ? 'PreSet' : dnsAndFamily.dns.dnsName.replace(/[^\x20-\x7E]/g, '')
               res.setHeader('DS-DNS', dnsHeaderLabel)
             } else {
-              // 未配置自定义 DNS，使用系统默认 DNS，并捕获 IP 写入响应头
-              rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url)
+              // 未配置自定义 DNS，使用系统默认 DNS；系统 DNS 失败时用已配置的提供方兜底
+              rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url, DnsUtil.getFallbackDnsList(dnsConfig, null))
               dnsHeaderLabel = 'default'
               res.setHeader('DS-DNS', dnsHeaderLabel)
               log.info(`域名 ${rOptions.hostname} 在DNS中未配置，使用系统默认DNS`)
             }
           } else {
-            rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url)
+            rOptions.lookup = dnsLookup.createDefaultLookupFunc(res, 'request url', url, DnsUtil.getFallbackDnsList(dnsConfig, null))
             dnsHeaderLabel = 'default'
             res.setHeader('DS-DNS', dnsHeaderLabel)
             log.info(`域名 ${rOptions.hostname} DNS配置不存在，使用系统默认DNS`)

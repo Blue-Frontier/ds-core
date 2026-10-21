@@ -96,6 +96,8 @@ module.exports = {
     const ignoreSpeedTest = options.ignoreSpeedTest === true
     const preSetDns = options.preSetDns || null
     const resetOnHostnameFallback = options.resetOnHostnameFallback === true
+    // 主 DNS（可能是「预设IP」）解析不出结果时的兜底提供方，见 dns/index.js 的 getFallbackDnsList
+    const fallbackDnsList = Array.isArray(options.fallbackDnsList) ? options.fallbackDnsList : []
 
     return (hostname, options, callback) => {
       const all = options && options.all === true
@@ -186,6 +188,44 @@ module.exports = {
         return null
       }
 
+      // 主 DNS 解析不出结果时，先用其它已配置的 DNS 提供方做一次真实解析，再决定是否交给系统 DNS。
+      // 预设IP 这类只在表里查的实例解析不出境外域名时会把请求推给系统 DNS，而国内系统 DNS 常返回
+      // EAI_AGAIN，自动重试又会重复同一条链，因此在这里给出一条能真正解析的退路。
+      const resolveByFallbackDns = async () => {
+        for (const fallbackDns of fallbackDnsList) {
+          if (fallbackDns == null || fallbackDns === dns) {
+            continue
+          }
+          try {
+            const fallbackIp = await fallbackDns.lookup(hostname, { family, resetOnHostnameFallback })
+            if (fallbackIp != null && fallbackIp !== hostname && isValidIpAddress(fallbackIp)) {
+              return { ip: fallbackIp, dnsName: fallbackDns.dnsName }
+            }
+          } catch (e) {
+            log.warn(`----- ${action}: ${hostname}, 兜底 DNS '${fallbackDns.dnsName}' 解析失败${target}, error:`, e)
+          }
+        }
+        return null
+      }
+
+      const useDefaultDns = async () => {
+        const fallback = await resolveByFallbackDns()
+        if (fallback != null) {
+          markBlockedIfAllZero(hostname, fallback.ip)
+          const fallbackFamily = getAddressFamily(fallback.ip)
+          log.info(`----- ${action}: ${hostname}, 主 DNS 未解析出结果，改用 '${fallback.dnsName}': ${fallback.ip}(family: ${fallbackFamily})${target} -----`)
+          if (res) {
+            res.setHeader('DS-DNS', `${safeHeaderValue(fallback.dnsName)}: ${fallback.ip} (IPv${fallbackFamily})`)
+          }
+          respondLookup(callback, fallback.ip, fallbackFamily, all)
+          return
+        }
+        // 不继承原 family 选项：强制 IPv6 时若系统 DNS 无 AAAA，会误报 ENOTFOUND，此时应允许系统 DNS 返回 IPv4
+        const defaultOptions = { ...options }
+        delete defaultOptions.family
+        defaultLookup(defaultOptions, callback)
+      }
+
       dns.lookup(hostname, { ipChecker, family, ignorePreSetIpList, resetOnHostnameFallback }).then(async (ip) => {
         let usedDns = dns
         if (preSetDns != null && (ip == null || ip === hostname || !isValidIpAddress(ip))) {
@@ -214,34 +254,55 @@ module.exports = {
           }
           respondLookup(callback, ip, addressFamily, all)
         } else {
-          // 使用默认dns
+          // 主 DNS 没给出可用 IP：先兜底到其它 DNS 提供方，再退回系统 DNS
           if (ip != null && ip !== hostname && !isValidIpAddress(ip)) {
             log.warn(`----- ${action}: ${hostname}, dns returned invalid ip '${ip}'${target}, fallback to default DNS`)
           }
-          // 不继承原 family 选项：强制 IPv6 时若系统 DNS 无 AAAA，会误报 ENOTFOUND，此时应允许系统 DNS 返回 IPv4
-          const defaultOptions = { ...options }
-          delete defaultOptions.family
-          log.info(`----- ${action}: ${hostname}, use default DNS: ${hostname}${target}, options:`, defaultOptions, ', dns:', dns)
-          defaultLookup(defaultOptions, callback)
+          await useDefaultDns()
         }
-      }).catch((err) => {
+      }).catch(async (err) => {
         log.error(`----- ${action}: ${hostname}, dns lookup error${target}, options:`, options, `, error:`, err)
-        const defaultOptions = { ...options }
-        delete defaultOptions.family
-        defaultLookup(defaultOptions, callback)
+        await useDefaultDns()
       })
     }
   },
 
-  // 未配置自定义 DNS 时，使用系统默认 DNS 解析，并捕获 IP 写入响应头
-  createDefaultLookupFunc (res, action, target) {
+  // 未配置自定义 DNS 时，使用系统默认 DNS 解析，并捕获 IP 写入响应头。
+  // fallbackDnsList 非空时，系统 DNS 失败（如国内解析境外域名的 EAI_AGAIN）会先用这些提供方兜底一次。
+  createDefaultLookupFunc (res, action, target, fallbackDnsList) {
     target = target ? `, target: ${target}` : ''
+    const dnsList = Array.isArray(fallbackDnsList) ? fallbackDnsList : []
 
     return (hostname, options, callback) => {
+      const useFallbackDns = async (err) => {
+        for (const fallbackDns of dnsList) {
+          try {
+            const fallbackIp = await fallbackDns.lookup(hostname, {})
+            if (fallbackIp != null && fallbackIp !== hostname && isValidIpAddress(fallbackIp)) {
+              const fallbackFamily = getAddressFamily(fallbackIp)
+              markBlockedIfAllZero(hostname, fallbackIp)
+              log.info(`----- ${action}: ${hostname}, 系统 DNS 解析失败（${err.code || err.message}），改用 '${fallbackDns.dnsName}': ${fallbackIp}(family: ${fallbackFamily})${target} -----`)
+              if (res) {
+                res.setHeader('DS-DNS', `${safeHeaderValue(fallbackDns.dnsName)}: ${fallbackIp} (IPv${fallbackFamily})`)
+              }
+              respondLookup(callback, fallbackIp, fallbackFamily, options && options.all === true)
+              return true
+            }
+          } catch (e) {
+            log.warn(`----- ${action}: ${hostname}, 兜底 DNS '${fallbackDns.dnsName}' 解析失败${target}, error:`, e)
+          }
+        }
+        return false
+      }
+
       defaultDns.lookup(hostname, options, (err, address, family) => {
         if (err) {
           log.error(`----- ${action}: ${hostname}, default dns lookup error${target}, error:`, err)
-          callback(err, address, family)
+          useFallbackDns(err).then((handled) => {
+            if (!handled) {
+              callback(err, address, family)
+            }
+          })
           return
         }
         markBlockedIfAllZero(hostname, address)

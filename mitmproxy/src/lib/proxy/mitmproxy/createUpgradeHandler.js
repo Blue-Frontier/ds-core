@@ -69,13 +69,14 @@ module.exports = function createUpgradeHandler (serverSetting, externalProxy, dn
       const isDnsIntercept = {}
       const dnsAndFamily = DnsUtil.getDNSAndFamily(dnsConfig, clientOptions.hostname)
       if (dnsAndFamily) {
+        const fallbackDnsList = DnsUtil.getFallbackDnsList(dnsConfig, dnsAndFamily.dns)
         clientOptions.lookup = dnsLookup.createLookupFunc(null, dnsAndFamily, 'upgrade',
-          'upgrade ' + clientOptions.hostname + ':' + clientOptions.port, clientOptions.port, isDnsIntercept)
+          'upgrade ' + clientOptions.hostname + ':' + clientOptions.port, clientOptions.port, isDnsIntercept, { fallbackDnsList })
         if (dnsAndFamily.family === 6) {
           clientOptions.family = 6
         }
       } else {
-        clientOptions.lookup = dnsLookup.createDefaultLookupFunc(null, 'upgrade', clientOptions.hostname + ':' + clientOptions.port)
+        clientOptions.lookup = dnsLookup.createDefaultLookupFunc(null, 'upgrade', clientOptions.hostname + ':' + clientOptions.port, DnsUtil.getFallbackDnsList(dnsConfig, null))
       }
     }
 

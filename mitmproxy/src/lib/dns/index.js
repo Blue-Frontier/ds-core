@@ -205,6 +205,35 @@ module.exports = {
     return !echDomainUtil.isEchDomain(dnsConfig.echPreSetIpDomains, hostname)
   },
 
+  /**
+   * 取「系统 DNS 解析失败时可兜底」的 DNS 列表。
+   *
+   * 「预设IP」只查预设表与缓存，解析不出时请求会落到系统 DNS；国内网络下系统 DNS 解析境外域名
+   * 常返回 EAI_AGAIN，而自动重试会重复同一条链，永远恢复不了。这里返回除预设IP与被排除实例以外
+   * 的其它提供方（DoH/DoT/TCP/UDP），供 dnsLookup 在回退系统 DNS 之前先做一次真实解析。
+   *
+   * @param dnsConfig 含 dnsMap 的 DNS 配置
+   * @param excludeDns 需要排除的实例，通常是当前已经尝试过的那个
+   */
+  getFallbackDnsList (dnsConfig, excludeDns) {
+    const dnsMap = dnsConfig && dnsConfig.dnsMap
+    if (dnsMap == null) {
+      return []
+    }
+
+    const list = []
+    for (const key in dnsMap) {
+      const dns = dnsMap[key]
+      if (dns == null || dns === excludeDns || dns === dnsMap.PreSet) {
+        continue
+      }
+      if (!list.includes(dns)) {
+        list.push(dns)
+      }
+    }
+    return list
+  },
+
   getDNSAndFamily (dnsConfig, hostname) {
     const isEchDomain = this.isEchDomain(dnsConfig, hostname)
     // ECH域名的「预设IP」例外：强制优先使用预设IP
