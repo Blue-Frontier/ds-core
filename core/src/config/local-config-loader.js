@@ -194,23 +194,30 @@ function getXgetOverlay (userConfig) {
     return null
   }
 
-  let host = String(rawUrl).trim()
+  let parsed
   try {
-    if (!/^[a-z][a-z\d+.-]*:\/\//i.test(host)) {
-      host = `https://${host}`
+    let url = String(rawUrl).trim()
+    if (!/^[a-z][a-z\d+.-]*:\/\//i.test(url)) {
+      url = `https://${url}`
     }
-    host = new URL(host).host
+    parsed = new URL(url)
   } catch {
     logOrConsole.warn('Xget 实例地址格式不正确，已跳过:', rawUrl)
     return null
   }
-  if (!host) {
+  if (!parsed.host) {
     return null
   }
 
+  // 支持子路径部署：https://host/xget 作为实例地址时，规则里的 /gh、/npm 会拼到 /xget 后面
+  const pathSuffix = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '')
+  const baseUrl = `${parsed.protocol}//${parsed.host}${pathSuffix}`
+
   const samplePath = path.join(__dirname, '..', 'modules', 'plugin', 'xget', 'xget_config.json5')
   try {
-    const content = fs.readFileSync(samplePath, 'utf8').replaceAll('${XGET_DOMAIN}', host)
+    const content = fs.readFileSync(samplePath, 'utf8')
+      .replaceAll('https://${XGET_DOMAIN}', baseUrl)
+      .replaceAll('${XGET_DOMAIN}', parsed.host)
     return jsonApi.parse(content)
   } catch (e) {
     logOrConsole.warn('加载 Xget 配置失败:', e.message)
