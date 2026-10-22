@@ -179,6 +179,46 @@ function getAutomaticCompatibleConfigPath () {
 }
 
 /**
+ * 生成 Xget 加速规则覆盖层。
+ *
+ * 用户启用 xget 插件并填写实例地址后，把样例配置里的 ${XGET_DOMAIN} 替换为该地址，
+ * 按「用户本地配置」的优先级参与合并（在用户配置之前合并，用户配置仍可覆盖同名规则）。
+ */
+function getXgetOverlay (userConfig) {
+  const xget = userConfig && userConfig.plugin && userConfig.plugin.xget
+  if (xget == null || xget.enabled !== true) {
+    return null
+  }
+  const rawUrl = xget.setting && xget.setting.instanceUrl
+  if (rawUrl == null || String(rawUrl).trim() === '') {
+    return null
+  }
+
+  let host = String(rawUrl).trim()
+  try {
+    if (!/^[a-z][a-z\d+.-]*:\/\//i.test(host)) {
+      host = `https://${host}`
+    }
+    host = new URL(host).host
+  } catch {
+    logOrConsole.warn('Xget 实例地址格式不正确，已跳过:', rawUrl)
+    return null
+  }
+  if (!host) {
+    return null
+  }
+
+  const samplePath = path.join(__dirname, '..', 'modules', 'plugin', 'xget', 'xget_config.json5')
+  try {
+    const content = fs.readFileSync(samplePath, 'utf8').replaceAll('${XGET_DOMAIN}', host)
+    return jsonApi.parse(content)
+  } catch (e) {
+    logOrConsole.warn('加载 Xget 配置失败:', e.message)
+    return null
+  }
+}
+
+/**
  * 从文件读取配置
  *
  * @param userConfig 用户配置
@@ -195,6 +235,11 @@ function getConfigFromFiles (userConfig, defaultConfig) {
   mergeApi.doMerge(merged, defaultConfig) // 合并默认配置，顺序排在最后
   mergeApi.doMerge(merged, shareRemoteConfig) // 再合并一次共享远程配置，使配置生效
   mergeApi.doMerge(merged, personalRemoteConfig) // 再合并一次个人远程配置，使配置生效
+
+  const xgetOverlay = getXgetOverlay(userConfig)
+  if (xgetOverlay != null) {
+    mergeApi.doMerge(merged, xgetOverlay) // Xget 加速规则：与用户本地配置同层，用户配置仍优先
+  }
 
   if (userConfig != null) {
     mergeApi.doMerge(merged, userConfig) // 再合并一次用户配置，使用户配置重新生效

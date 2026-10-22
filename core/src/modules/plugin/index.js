@@ -2,6 +2,7 @@ module.exports = {
   node: require('./node'),
   git: require('./git'),
   pip: require('./pip'),
+  xget: require('./xget'),
   overwall: require('./overwall'),
   share: require('./share'),
   // free-eye 为 ESM 模块，CJS require() 得到 { default: ... }，需解包
