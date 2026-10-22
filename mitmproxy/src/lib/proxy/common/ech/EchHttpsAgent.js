@@ -346,7 +346,11 @@ class EchHttpsAgent extends ProxyHttpsAgent {
         }
         let socket = null
         try {
-          socket = this.createNativeConnection(options, callback)
+          // 原生回退必须重新解析：ECH 专用 DNS 返回的 IP 只对 ECH 前端可用，
+          // 拿它做普通 TLS 握手会得到 alert 40（Steam CDN 就会这样）。
+          const nativeOptions = { ...options }
+          delete nativeOptions.lookup
+          socket = this.createNativeConnection(nativeOptions, callback)
         } catch (e) {
           callback(e)
           return
@@ -426,6 +430,13 @@ class EchHttpsAgent extends ProxyHttpsAgent {
       } else if (lastError.code !== 'ECH_NO_CONFIG') {
         this.stat.error++
         const ip = lastError.resolvedIp
+        const message = String(lastError.message || '')
+        // 服务端在带 ECH 的握手里直接 alert 40（Steam CDN 这类不支持 ECH 的站点），
+        // 换 IP 重试没有意义，直接按域名拉黑一段时间，避免每次检查都先付一次失败握手。
+        const serverRejectsEch = /alert number 40|HANDSHAKE_FAILURE|EPROTO/i.test(message)
+        if (serverRejectsEch) {
+          this.markUnusable(hostname, ECH_REJECT_TTL, message)
+        }
         if (ip == null) {
           this.markUnusable(hostname, ECH_FAILURE_TTL, lastError.message)
         } else if (ip !== recordedIp) {
