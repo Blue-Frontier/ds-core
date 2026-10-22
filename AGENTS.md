@@ -37,7 +37,8 @@ pnpm --filter @blue-frontier/mitmproxy test -- test/regex.test.js
 
 ## 提交与推送
 
-- AI 可 `git add`、整理改动、跑验证；**提交（含签名）由人类执行**
+- AI 可 `git add`、整理改动、跑验证；**默认提交（含签名）由人类执行**
+- **例外（用户明确授权时）**：用户可以直接要求 AI 提交并推送。此时允许 AI 执行 `git commit --no-gpg-sign`，提交信息末尾附共同作者署名 `Co-authored-by: AI Agent <agent@ds-core.local>`，随后由 AI 推送并验证。该方式视为本仓库允许的提交方式之一。
 - 提交信息：`type(scope): 中文摘要`
 - **推送由 AI 负责**：人类提交后告知 AI，AI 执行 `git push` 并做验证（推送不属于签名动作）
 - 验证：`gh api repos/Blue-Frontier/ds-core/commits/main --jq .sha[0:8]` 与本地 HEAD 比对
