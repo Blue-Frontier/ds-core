@@ -260,7 +260,7 @@ importers:
         specifier: ^4.6.0
         version: 4.6.0
       axios:
-        specifier: ^1.18.1
+        specifier: ^1.20.0
         version: 1.20.0(debug@4.4.3(supports-color@4.4.0))(supports-color@4.4.0)
       baidu-aip-sdk:
         specifier: ^4.16.16
