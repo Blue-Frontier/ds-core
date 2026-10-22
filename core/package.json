@@ -20,7 +20,7 @@
     "@vscode/sudo-prompt": "^9.3.2",
     "fix-path": "^3.0.0",
     "iconv-lite": "^0.6.3",
-    "koffi": "^3.3.2",
+    "koffi": "^3.3.3",
     "lodash": "^4.18.1",
     "log4js": "^6.9.1",
     "node-powershell": "^4.0.0",
