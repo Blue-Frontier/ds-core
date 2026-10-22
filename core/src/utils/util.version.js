@@ -17,6 +17,42 @@ function parseVersion (version) {
 }
 
 /**
+ * 按 semver 语义比较预发布段（如 beta.100 / dev.abc123）
+ * @returns {number} 大于 0 表示 a 比 b 新
+ */
+function comparePrerelease (a, b) {
+  const pa = String(a).split('.')
+  const pb = String(b).split('.')
+  const max = Math.max(pa.length, pb.length)
+  for (let i = 0; i < max; i++) {
+    if (i >= pa.length) {
+      return -1
+    }
+    if (i >= pb.length) {
+      return 1
+    }
+    const na = /^\d+$/.test(pa[i]) ? Number(pa[i]) : null
+    const nb = /^\d+$/.test(pb[i]) ? Number(pb[i]) : null
+    if (na != null && nb != null) {
+      if (na !== nb) {
+        return na > nb ? 1 : -1
+      }
+      continue
+    }
+    if (na != null) {
+      return -1 // 数字段的优先级低于字母段（semver）
+    }
+    if (nb != null) {
+      return 1
+    }
+    if (pa[i] !== pb[i]) {
+      return pa[i] > pb[i] ? 1 : -1
+    }
+  }
+  return 0
+}
+
+/**
  * 比较版本号
  *
  * @param onlineVersion  线上版本号
@@ -59,21 +95,11 @@ function isNewVersion (onlineVersion, currentVersion, log = null) {
     }
 
     // 版本号相同，继续比对预发布版本号。
-    //
-    // ⚠️ 已知缺陷：下面把整个 pre 段当作**字符串**比较，因此 <run_number> 跨位数时会判反方向：
-    //    "beta.100" < "beta.99"（逐字符比 "1" < "9"），于是当前 beta.99 看线上 beta.100 会得到
-    //    -101「无需更新」；同理 "beta.9" 会被判定为比 "beta.788" 更新。
-    //    实际影响有限：正式版用户看不到预发布版更新（见 packages/gui/src/bridge/update/backend.js
-    //    里的 skipPreRelease 守卫），且线上「最近可用版本」通常就是最新的那个，触发需要
-    //    「当前号比线上大但位数更少」这种巧合。2026-10 时 run_number 已近 800，下一个坎是 1000。
-    //    若要彻底修：按 "." 分段、数字段按数值比较（semver 语义），而不是整段比字符串。
+    // 预发布段按 semver 语义比较：按 "." 分段，纯数字段按数值比较，其余按 ASCII 比较；
+    // 这样 beta.100 > beta.99、alpha.10 > alpha.9，而不是逐字符比字符串。
+    // 不同标签之间的优先级：alpha < beta < dev < rc（ASCII 比较即满足）。
     if (onlineVersionObj.pre && curVersionObj.pre) {
-      // 都为预发布版本时，直接比较预发布版本号字符串的大小
-      if (onlineVersionObj.pre > curVersionObj.pre) {
-        return 101
-      } else if (onlineVersionObj.pre < curVersionObj.pre) {
-        return -101
-      }
+      return comparePrerelease(onlineVersionObj.pre, curVersionObj.pre) > 0 ? 101 : -101
     } else if (!onlineVersionObj.pre && curVersionObj.pre) {
       // 线上为正式版本，当前版本为预发布版本，需要更新
       return 102
