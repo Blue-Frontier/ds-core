@@ -28,6 +28,20 @@ function isKeyInUserNpmrc (key) {
 
 const NodePlugin = function (context) {
   const { config, shell, event, log } = context
+
+  // npm 不存在时给一条能指导操作的错误，而不是把 /bin/sh: npm: command not found 直接抛给界面
+  function runNpm (cmds, options) {
+    return runNpm(cmds, options).catch((e) => {
+      const message = String((e && e.message) || e)
+      if (/command not found|ENOENT|not recognized as an internal|无法将.*识别/i.test(message)) {
+        const err = new Error('未检测到 npm 命令。请先安装 Node.js（含 npm）；macOS 从 Finder 启动时可能读不到终端里的 PATH，可在终端执行 "which npm" 确认路径，或在设置里把 npm 命令填成绝对路径。')
+        err.cause = e
+        throw err
+      }
+      throw e
+    })
+  }
+
   const nodeApi = {
     async start () {
       try {
@@ -57,7 +71,7 @@ const NodePlugin = function (context) {
     async getNpmEnv () {
       const command = config.get().plugin.node.setting.command || 'npm'
 
-      const ret = await shell.exec([`${command} config list --json`], { type: 'cmd' })
+      const ret = await runNpm([`${command} config list --json`], { type: 'cmd' })
       if (ret != null) {
         const json = ret.substring(ret.indexOf('{'))
         return jsonApi.parse(json)
@@ -86,7 +100,7 @@ const NodePlugin = function (context) {
       if (deleteKeys.length > 0) {
         cmds.push(`${command} config delete ${deleteKeys.join(' ')}`)
       }
-      return await shell.exec(cmds, { type: 'cmd' })
+      return await runNpm(cmds, { type: 'cmd' })
     },
 
     async unsetNpmEnv (list) {
@@ -96,7 +110,7 @@ const NodePlugin = function (context) {
       const keys = list.map((item) => {
         return typeof item === 'string' ? item : item.key
       }).filter(Boolean)
-      return await shell.exec([`${command} config delete ${keys.join(' ')}`], { type: 'cmd' })
+      return await runNpm([`${command} config delete ${keys.join(' ')}`], { type: 'cmd' })
     },
 
     async setYarnEnv (list) {
@@ -109,7 +123,7 @@ const NodePlugin = function (context) {
           cmds.push(`yarn config delete ${item.key}`)
         }
       }
-      return await shell.exec(cmds, { type: 'cmd' })
+      return await runNpm(cmds, { type: 'cmd' })
     },
 
     async unsetYarnEnv (list) {
@@ -117,7 +131,7 @@ const NodePlugin = function (context) {
       for (const item of list) {
         cmds.push(`yarn config delete ${item} `)
       }
-      return await shell.exec(cmds, { type: 'cmd' })
+      return await runNpm(cmds, { type: 'cmd' })
     },
 
     async getVariables () {
@@ -233,7 +247,7 @@ const NodePlugin = function (context) {
         env.push({ key: 'NODE_TLS_REJECT_UNAUTHORIZED', value: '0' })
       }
 
-      const ret = await shell.exec([`${command} config set ${setArgs.join(' ')}`], { type: 'cmd' })
+      const ret = await runNpm([`${command} config set ${setArgs.join(' ')}`], { type: 'cmd' })
       if (env.length > 0) {
         await shell.setSystemEnv({ list: env })
       }
@@ -247,7 +261,7 @@ const NodePlugin = function (context) {
       const command = config.get().plugin.node.setting.command || 'npm'
 
       // npm config delete 支持一次删除多个 key，合并成一条命令
-      const ret = await shell.exec([`${command} config delete proxy https-proxy strict-ssl cafile NODE_EXTRA_CA_CERTS NODE_TLS_REJECT_UNAUTHORIZED`], { type: 'cmd' })
+      const ret = await runNpm([`${command} config delete proxy https-proxy strict-ssl cafile NODE_EXTRA_CA_CERTS NODE_TLS_REJECT_UNAUTHORIZED`], { type: 'cmd' })
       event.fire('status', { key: 'plugin.node.enabled', value: false })
       log.info('关闭【NPM】代理成功')
       return ret
