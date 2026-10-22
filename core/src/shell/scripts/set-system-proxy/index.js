@@ -613,13 +613,31 @@ const executor = {
 
           if (setCaBundle) {
             const caCertPath = config.get().server.setting.rootCaFile.certPath
-            log.info(`开启系统代理的同时设置环境变量：REQUEST_CA_BUNDLE = "${caCertPath}"`)
-            envList.push({ key: 'REQUEST_CA_BUNDLE', value: caCertPath })
+            // REQUESTS_CA_BUNDLE 供 Python requests / httpx 等使用，
+            // SSL_CERT_FILE 供 OpenSSL 系程序（curl、openssl 等）使用
+            log.info(`开启系统代理的同时设置环境变量：REQUESTS_CA_BUNDLE = "${caCertPath}"、SSL_CERT_FILE = "${caCertPath}"`)
+            envList.push({ key: 'REQUESTS_CA_BUNDLE', value: caCertPath })
+            envList.push({ key: 'SSL_CERT_FILE', value: caCertPath })
           }
 
           await setWindowsEnvVariables(exec, envList)
+
+          // 旧版本把变量名写成了 REQUEST_CA_BUNDLE，升级后要主动清掉；
+          // 仅当值确实是 DS 的证书路径时才删除，避免误删用户自己设置的值。
+          if (setCaBundle) {
+            const caCertPath = config.get().server.setting.rootCaFile.certPath
+            const regKey = createEnvRegKey()
+            const legacyValue = await getWindowsEnvVariable(regKey, 'REQUEST_CA_BUNDLE')
+            if (legacyValue != null && String(legacyValue) === String(caCertPath)) {
+              const existed = await removeWindowsEnvVariable(regKey, 'REQUEST_CA_BUNDLE')
+              if (existed) {
+                delete process.env.REQUEST_CA_BUNDLE
+                await broadcastWindowsEnvChange(exec)
+              }
+            }
+          }
         } catch (e) {
-          log.error('设置环境变量 HTTPS_PROXY、HTTP_PROXY、REQUEST_CA_BUNDLE 失败:', e)
+          log.error('设置环境变量 HTTPS_PROXY、HTTP_PROXY、REQUESTS_CA_BUNDLE、SSL_CERT_FILE 失败:', e)
         }
       }
 
@@ -643,7 +661,8 @@ const executor = {
       }
 
       try {
-        const defaultKeys = ['HTTPS_PROXY', 'HTTP_PROXY', 'REQUEST_CA_BUNDLE']
+        // 最后一项是历史版本写错的变量名，仅用于清理，避免旧值残留在系统里
+        const defaultKeys = ['HTTPS_PROXY', 'HTTP_PROXY', 'REQUESTS_CA_BUNDLE', 'SSL_CERT_FILE', 'REQUEST_CA_BUNDLE']
         const backup = restoreProxyEnvBackup()
         // 有备份时只处理备份中的 key，避免误删用户本来就有、但 DS 未写入的变量
         const keys = backup ? Object.keys(backup) : defaultKeys
@@ -663,11 +682,30 @@ const executor = {
             }
           }
         }
+        // 升级场景：旧版本的备份里没有新增的键，但新版本可能已经把 DS 的 CA 路径
+        // 写了进去。只清理值确实是 DS 证书路径的键，避免误删用户自己设置的值。
+        if (backup) {
+          loadConfig()
+          const caCertPath = config.get().server.setting.rootCaFile.certPath
+          for (const key of ['REQUESTS_CA_BUNDLE', 'SSL_CERT_FILE']) {
+            if (keys.includes(key)) {
+              continue
+            }
+            const current = await getWindowsEnvVariable(regKey, key)
+            if (current != null && String(current) === String(caCertPath)) {
+              const existed = await removeWindowsEnvVariable(regKey, key)
+              if (existed) {
+                delete process.env[key]
+                changed = true
+              }
+            }
+          }
+        }
         if (changed) {
           await broadcastWindowsEnvChange(exec)
         }
       } catch (e) {
-        log.error('恢复/删除环境变量 HTTPS_PROXY、HTTP_PROXY、REQUEST_CA_BUNDLE 失败:', e)
+        log.error('恢复/删除环境变量 HTTPS_PROXY、HTTP_PROXY、REQUESTS_CA_BUNDLE、SSL_CERT_FILE 失败:', e)
       }
 
       return true
