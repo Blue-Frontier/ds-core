@@ -172,6 +172,26 @@ const configApi = {
       log.info('删除远程配置文件成功:', remoteSavePath)
     }
   },
+  getRemoteConfigVersions (suffix = '') {
+    const layer = suffix === '_personal' ? '_personal' : ''
+    return configLoader.getRemoteConfigVersions(layer)
+  },
+  setRemoteConfigVersion (suffix = '', version = '') {
+    const layer = suffix === '_personal' ? '_personal' : ''
+    if (version != null && version !== '') {
+      const safeVersion = String(version).replace(/[^a-z0-9_.-]/gi, '_')
+      const filePath = path.join(
+        configLoader.getUserBasePath(),
+        `remote_config_history${layer}`,
+        `${safeVersion}.json5`,
+      )
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`远程配置版本不存在: ${version}`)
+      }
+    }
+    configLoader.setRemoteSelection(layer, version)
+    return configApi.reload()
+  },
   readRemoteConfigStr (suffix = '') {
     try {
       const path = configLoader.getRemoteConfigPath(suffix)
@@ -558,8 +578,8 @@ function saveRemoteConfig (body, remoteConfigUrl, suffix) {
     return false
   }
 
-  const oldShared = configLoader.getRemoteConfig()
-  const oldPersonal = configLoader.getRemoteConfig('_personal')
+  const oldShared = configLoader.getLiveRemoteConfig()
+  const oldPersonal = configLoader.getLiveRemoteConfig('_personal')
   remoteOverrides.prepareForRemoteUpdate({
     loader: configLoader,
     defaultConfig: defConfig,
@@ -577,6 +597,8 @@ function saveRemoteConfig (body, remoteConfigUrl, suffix) {
     throw new Error(`保存远程配置文件失败: ${e.message}`)
   }
   log.info('保存远程配置文件成功:', remoteSavePath)
+  // 每次成功下载都留一份历史快照，供「配置版本」下拉切换
+  configLoader.saveRemoteConfigVersion(body, suffix, String(Date.now()))
   return true
 }
 

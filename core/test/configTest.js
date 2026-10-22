@@ -56,3 +56,52 @@ describe('local config null deletion markers', () => {
     assert.deepStrictEqual(load(null, { 'remote.example': true }), {})
   })
 })
+
+describe('remote config version selection', () => {
+  let home
+  let previousUserProfile
+
+  before(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-core-versions-'))
+    previousUserProfile = process.env.USERPROFILE
+    process.env.USERPROFILE = home
+  })
+
+  after(() => {
+    if (previousUserProfile === undefined) {
+      delete process.env.USERPROFILE
+    } else {
+      process.env.USERPROFILE = previousUserProfile
+    }
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+
+  it('lists live and historical versions for both remote layers', () => {
+    fs.writeFileSync(configLoader.getRemoteConfigPath(), '{ app: { metaInfo: { id: "shared", version: "2" } } }')
+    fs.writeFileSync(configLoader.getRemoteConfigPath('_personal'), '{ app: { metaInfo: { id: "personal", version: "3" } } }')
+    configLoader.saveRemoteConfigVersion('{ app: { metaInfo: { id: "shared", version: "1" } } }', '', '100')
+    configLoader.saveRemoteConfigVersion('{ app: { metaInfo: { id: "personal", version: "2" } } }', '_personal', '200')
+
+    assert.deepStrictEqual(configLoader.getRemoteConfigVersions(''), [
+      { version: '', id: 'shared', label: '2', latest: true, selected: true },
+      { version: '100', id: 'shared', label: '1', selected: false },
+    ])
+    assert.deepStrictEqual(configLoader.getRemoteConfigVersions('_personal'), [
+      { version: '', id: 'personal', label: '3', latest: true, selected: true },
+      { version: '200', id: 'personal', label: '2', selected: false },
+    ])
+  })
+
+  it('selects an existing history entry and falls back to live when cleared', () => {
+    fs.writeFileSync(configLoader.getRemoteConfigPath(), '{ app: { metaInfo: { id: "shared", version: "2" } } }')
+    configLoader.saveRemoteConfigVersion('{ app: { metaInfo: { id: "shared", version: "1" } } }', '', '100')
+    configLoader.setRemoteSelection('', '100')
+
+    assert.equal(configLoader.getRemoteConfig().app.metaInfo.version, '1')
+    assert.equal(configLoader.getRemoteConfigVersions('')[1].selected, true)
+
+    configLoader.setRemoteSelection('', '')
+    assert.equal(configLoader.getRemoteConfig().app.metaInfo.version, '2')
+    assert.equal(configLoader.getRemoteConfigVersions('')[0].selected, true)
+  })
+})

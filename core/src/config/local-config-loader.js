@@ -71,9 +71,106 @@ function getRemoteConfigPath (suffix = '') {
   return path.join(dir, `/remote_config${suffix}.json5`)
 }
 
+function getRemoteHistoryDir (suffix = '') {
+  return path.join(getUserBasePath(), `remote_config_history${suffix}`)
+}
+
+function getRemoteSelectionPath () {
+  return path.join(getUserBasePath(), 'remote_config_selection.json')
+}
+
+function sanitizeRemoteVersion (version) {
+  return String(version).replace(/[^\w.-]/gi, '_')
+}
+
+function getRemoteSelection () {
+  const filePath = getRemoteSelectionPath()
+  if (!fs.existsSync(filePath)) {
+    return {}
+  }
+  try {
+    return jsonApi.parse(fs.readFileSync(filePath)) || {}
+  } catch (e) {
+    logOrConsole.error('解析远程配置版本选择失败:', filePath, ', error:', e)
+    return {}
+  }
+}
+
+function setRemoteSelection (suffix, version) {
+  const selection = getRemoteSelection()
+  const key = suffix || 'shared'
+  if (version == null || version === '') {
+    delete selection[key]
+  } else {
+    selection[key] = String(version)
+  }
+  fs.writeFileSync(getRemoteSelectionPath(), jsonApi.stringify(selection))
+}
+
+function getRemoteConfigVersions (suffix = '') {
+  const selection = getRemoteSelection()[suffix || 'shared'] || ''
+  const dir = getRemoteHistoryDir(suffix)
+  const versions = []
+  if (fs.existsSync(dir)) {
+    const names = fs.readdirSync(dir).filter(name => name.endsWith('.json5')).sort().reverse()
+    for (const name of names) {
+      const version = name.slice(0, -'.json5'.length)
+      let meta = {}
+      try {
+        meta = jsonApi.parse(fs.readFileSync(path.join(dir, name)))?.app?.metaInfo || {}
+      } catch (e) {
+        logOrConsole.warn('解析远程配置历史失败:', name, ', error:', e)
+      }
+      versions.push({
+        version,
+        id: meta.id || '',
+        label: meta.version != null ? meta.version : version,
+        selected: selection === version,
+      })
+    }
+  }
+
+  const liveMeta = getLiveRemoteConfig(suffix)?.app?.metaInfo
+  if (liveMeta != null && (liveMeta.id != null || liveMeta.version != null)) {
+    const hasSelection = selection !== '' && versions.some(item => item.version === selection)
+    versions.unshift({
+      version: '',
+      id: liveMeta.id || '',
+      label: liveMeta.version != null ? liveMeta.version : '',
+      latest: true,
+      selected: !hasSelection,
+    })
+  }
+  return versions
+}
+
+function getSelectedRemoteConfig (suffix = '') {
+  const selected = getRemoteSelection()[suffix || 'shared']
+  if (!selected || !/^[\w.-]+$/i.test(String(selected))) {
+    return null
+  }
+  const filePath = path.join(getRemoteHistoryDir(suffix), `${sanitizeRemoteVersion(selected)}.json5`)
+  return fs.existsSync(filePath) ? loadConfigFromFile(filePath) : null
+}
+
+function saveRemoteConfigVersion (content, suffix = '', version = Date.now().toString()) {
+  const dir = getRemoteHistoryDir(suffix)
+  fs.mkdirSync(dir, { recursive: true })
+  const safeVersion = sanitizeRemoteVersion(version)
+  const filePath = path.join(dir, `${safeVersion}.json5`)
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, content)
+  }
+  return path.basename(filePath, '.json5')
+}
+
+function getLiveRemoteConfig (suffix = '') {
+  return loadConfigFromFile(getRemoteConfigPath(suffix))
+}
+
 function getRemoteConfig (suffix = '') {
-  const remoteConfigFilePath = getRemoteConfigPath(suffix)
-  return loadConfigFromFile(remoteConfigFilePath)
+  const selected = getSelectedRemoteConfig(suffix)
+  return selected || getLiveRemoteConfig(suffix)
 }
 
 function getAutomaticCompatibleConfigPath () {
@@ -119,6 +216,11 @@ module.exports = {
 
   getRemoteConfigPath,
   getRemoteConfig,
+  getLiveRemoteConfig,
+  getRemoteSelection,
+  setRemoteSelection,
+  getRemoteConfigVersions,
+  saveRemoteConfigVersion,
 
   getAutomaticCompatibleConfigPath,
 
