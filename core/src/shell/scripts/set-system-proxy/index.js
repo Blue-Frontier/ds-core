@@ -26,36 +26,74 @@ function getDomesticDomainAllowListTmpFilePath () {
 }
 
 /**
- * 生成合并的 CA 包：系统/Node 根证书 + dev-sidecar 自己的 CA。
+ * 生成合并的 CA 包：操作系统证书存储里的根证书 + dev-sidecar 自己的 CA。
  *
- * SSL_CERT_FILE / REQUESTS_CA_BUNDLE 都是「替换默认信任库」的语义，
+ * SSL_CERT_FILE / REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE 都是「替换默认信任库」的语义，
  * 只指向 DS 的 CA 会让所有未被 MITM 的站点（以及不走代理的程序）校验失败。
+ * 使用系统存储而不是 Node 内置列表，避免 Node 版本落后导致根证书过期。
  */
-function buildCaBundle (caCertPath) {
+async function buildCaBundle (caCertPath) {
   const bundlePath = path.join(path.dirname(caCertPath), 'ca-bundle.pem')
   const parts = []
 
   try {
-    const tls = require('node:tls')
-    parts.push(...tls.rootCertificates)
+    if (process.platform === 'win32') {
+      const script = [
+        '$dis=@{};',
+        'Get-ChildItem Cert:\\LocalMachine\\Disallowed,Cert:\\CurrentUser\\Disallowed -ErrorAction SilentlyContinue | ForEach-Object { $dis[$_.Thumbprint]=1 };',
+        '$c=Get-ChildItem Cert:\\LocalMachine\\Root,Cert:\\CurrentUser\\Root -ErrorAction SilentlyContinue;',
+        'foreach($x in $c){ if($dis.ContainsKey($x.Thumbprint)){continue};',
+        "$b=[Convert]::ToBase64String($x.RawData,'InsertLineBreaks');",
+        "Write-Output '-----BEGIN CERTIFICATE-----'; Write-Output $b; Write-Output '-----END CERTIFICATE-----' }",
+      ].join(' ')
+      const out = await execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+        maxBuffer: 20 * 1024 * 1024,
+        windowsHide: true,
+      })
+      if (out && out.includes('BEGIN CERTIFICATE')) {
+        parts.push(out)
+      }
+    } else if (process.platform === 'darwin') {
+      for (const keychain of [
+        '/System/Library/Keychains/SystemRootCertificates.keychain',
+        '/Library/Keychains/System.keychain',
+      ]) {
+        try {
+          const out = await execFile('security', ['find-certificate', '-a', '-p', keychain], { maxBuffer: 20 * 1024 * 1024 })
+          if (out && out.includes('BEGIN CERTIFICATE')) {
+            parts.push(out)
+          }
+        } catch {
+          // 钥匙串不存在或不可读时继续尝试下一个
+        }
+      }
+      if (parts.length === 0) {
+        parts.push(fs.readFileSync('/etc/ssl/cert.pem', 'utf8'))
+      }
+    } else {
+      for (const file of [
+        '/etc/ssl/certs/ca-certificates.crt',
+        '/etc/pki/tls/certs/ca-bundle.crt',
+        '/etc/ssl/cert.pem',
+        '/usr/local/etc/openssl/cert.pem',
+      ]) {
+        if (fs.existsSync(file)) {
+          parts.push(fs.readFileSync(file, 'utf8'))
+          break
+        }
+      }
+    }
   } catch (e) {
-    log.warn('读取 Node 内置根证书失败:', e)
+    log.warn('读取系统根证书失败:', e)
   }
 
-  // Linux / macOS 的系统 CA 包，补上 Node 列表之外的企业根证书
-  for (const file of [
-    '/etc/ssl/certs/ca-certificates.crt',
-    '/etc/pki/tls/certs/ca-bundle.crt',
-    '/etc/ssl/cert.pem',
-    '/usr/local/etc/openssl/cert.pem',
-  ]) {
+  if (parts.length === 0) {
+    // 兜底：系统存储读取失败时仍保证信任库可用，避免变量指向空文件
     try {
-      if (fs.existsSync(file)) {
-        parts.push(fs.readFileSync(file, 'utf8'))
-        break
-      }
-    } catch {
-      // 忽略不可读的系统包
+      parts.push(...require('node:tls').rootCertificates)
+      log.warn('未读到系统根证书，临时使用 Node 内置根证书列表')
+    } catch (e) {
+      log.warn('读取 Node 内置根证书失败:', e)
     }
   }
 
@@ -654,7 +692,7 @@ const executor = {
             const caCertPath = config.get().server.setting.rootCaFile.certPath
             let caBundlePath = caCertPath
             try {
-              caBundlePath = buildCaBundle(caCertPath)
+              caBundlePath = await buildCaBundle(caCertPath)
             } catch (e) {
               log.warn('生成合并 CA 包失败，退回只信任 DS CA:', e)
             }
