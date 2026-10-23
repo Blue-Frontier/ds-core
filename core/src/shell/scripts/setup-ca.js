@@ -21,7 +21,7 @@ function assertCert (certPath) {
 function sudoExec (cmd) {
   return new Promise((resolve, reject) => {
     log.info('以管理员权限执行命令:', cmd)
-    sudoPrompt.exec(cmd, { name: 'dev-sidecar' }, (error, stdout, stderr) => {
+    sudoPrompt.exec(cmd, { name: 'devsidecar' }, (error, stdout, stderr) => {
       if (stderr) {
         log.warn('以管理员权限执行命令，stderr:', stderr)
       }
@@ -54,8 +54,11 @@ async function installLinuxCa (exec, certPath) {
     }
   }
 
-  // Arch：优先 p11-kit trust anchor
-  if (fs.existsSync('/etc/arch-release') || (await hasCmd('trust'))) {
+  // Arch：优先 p11-kit trust anchor。
+  // 不能用 hasCmd('trust') 判断：装了 p11-kit 的 Debian/Ubuntu/Fedora 也有 /usr/bin/trust，
+  // 会被误判成 Arch 并走到错误的安装分支。
+  const isArch = fs.existsSync('/etc/arch-release') || fs.existsSync('/etc/pacman.d/mirrorlist')
+  if (isArch) {
     try {
       await sudoExec(`trust anchor '${certPath}'`)
       return { method: 'arch:trust', cert: certPath }

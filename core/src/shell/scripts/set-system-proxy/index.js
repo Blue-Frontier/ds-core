@@ -492,7 +492,7 @@ function validateProxyPort (port) {
 function sudoExecMac (cmd) {
   return new Promise((resolve, reject) => {
     log.info('以管理员权限执行命令:', cmd)
-    sudoPrompt.exec(cmd, { name: 'dev-sidecar' }, (error, stdout, stderr) => {
+    sudoPrompt.exec(cmd, { name: 'devsidecar' }, (error, stdout, stderr) => {
       if (stderr) {
         log.warn('以管理员权限执行命令，stderr:', stderr)
       }
