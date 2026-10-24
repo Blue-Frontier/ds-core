@@ -31,7 +31,7 @@ const NodePlugin = function (context) {
 
   // npm 不存在时给一条能指导操作的错误，而不是把 /bin/sh: npm: command not found 直接抛给界面
   function runNpm (cmds, options) {
-    return runNpm(cmds, options).catch((e) => {
+    return shell.exec(cmds, options).catch((e) => {
       const message = String((e && e.message) || e)
       if (/command not found|ENOENT|not recognized as an internal|无法将.*识别/i.test(message)) {
         const err = new Error('未检测到 npm 命令。请先安装 Node.js（含 npm）；macOS 从 Finder 启动时可能读不到终端里的 PATH，可在终端执行 "which npm" 确认路径，或在设置里把 npm 命令填成绝对路径。')
