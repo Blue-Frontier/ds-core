@@ -518,7 +518,12 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             log.error(`代理请求错误: ${url}, cost: ${cost} ms, error:`, e, ', rOptions:', jsonApi.stringify2(compactROptions(rOptions)))
             countSlow(isDnsIntercept, `代理请求错误: ${e.message}`)
             if (e.code === 'ENETUNREACH' && isDnsIntercept && isDnsIntercept.ip) {
-              reportIPv6Error(isDnsIntercept.ip)
+              // 防御：错误上报自身失败（如函数缺失）不得影响主错误处理路径，否则会在这里抛 uncaught TypeError（issue #742）
+              try {
+                reportIPv6Error(isDnsIntercept.ip)
+              } catch {
+                /* ignore */
+              }
             }
             e.retryable = true
             reject(e)

@@ -22,6 +22,7 @@ let ipv6Unavailable = (() => {
 })()
 
 // 运行时兜底：累计 3 次 IPv6 ENETUNREACH 后，认为上游 IPv6 不可达
+// （接口存在但无出站路由的场景，如手机热点；此时启动期检测发现不了问题，只能靠运行期累计）
 let ipv6ErrCount = 0
 function reportIPv6Error (ip) {
   if (!isIPv6(ip) || ipv6Unavailable) return
@@ -31,7 +32,6 @@ function reportIPv6Error (ip) {
     log.warn(`IPv6 地址 ${ip} 多次不可达（ENETUNREACH），已自动禁用 IPv6 DNS 解析`)
   }
 }
-module.exports.reportIPv6Error = reportIPv6Error
 
 function mapToList (ipMap) {
   const ipList = []
@@ -501,3 +501,7 @@ module.exports = class BaseDNS {
     })
   }
 }
+
+// reportIPv6Error 必须挂在类导出上：在 `module.exports = class BaseDNS` 之前 module.exports 还是 {}，
+// 那时挂的属性会随类替换一起丢弃，导致 `require('.../base').reportIPv6Error` 为 undefined（issue #742）
+module.exports.reportIPv6Error = reportIPv6Error
