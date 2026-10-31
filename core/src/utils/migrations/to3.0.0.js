@@ -37,27 +37,53 @@ function caPemPaths () {
 /**
  * v3.0.0 step 1: CA 私钥 pem → SecretStore，删除明文
  */
+/**
+ * v3.0.0 step 1: CA 私钥备份进 SecretStore，明文文件**保留**并收紧权限
+ *
+ * 不删除的原因：代理子进程的 initCA() 需要这两个文件；删掉后它会把
+ * 「文件不存在」当成首次运行，直接换发一张新 CA，用户已安装的根证书随即失效，
+ * 浏览器表现为间歇性的证书错误。证书也一并备份，文件丢失时能恢复同一 CA。
+ */
 async function migrateTo300_caPrivateKey () {
   const step = `${MIGRATION_ID}:ca-key`
-  if (await secretStore.hasSecret(ACCOUNT_CA_PEM)) {
-    for (const p of caPemPaths()) {
-      try {
-        fs.unlinkSync(p)
-      } catch { /* already gone */ }
-    }
-    return { step, action: 'already' }
-  }
+  const keyPath = path.join(userBase(), 'dev-sidecar.ca.key.pem')
+  const certPath = path.join(userBase(), 'dev-sidecar.ca.crt')
+  let action = 'none'
+
   for (const p of caPemPaths()) {
     try {
       const pem = fs.readFileSync(p, 'utf8')
-      if (pem && /PRIVATE/i.test(pem)) {
-        await secretStore.setSecret(ACCOUNT_CA_PEM, pem)
-        fs.unlinkSync(p)
-        return { step, action: 'migrated', from: p }
+      if (!pem || !/PRIVATE/i.test(pem)) {
+        continue
       }
-    } catch { /* try next */ }
+      await secretStore.setSecret(ACCOUNT_CA_PEM, pem)
+      action = 'stored'
+      if (p === keyPath && process.platform !== 'win32') {
+        try {
+          fs.chmodSync(p, 0o600)
+        } catch { /* 权限收紧失败不影响使用 */ }
+      }
+    } catch { /* 文件不存在，跳过 */ }
   }
-  return { step, action: 'none' }
+
+  try {
+    if (fs.existsSync(certPath)) {
+      const certPem = fs.readFileSync(certPath, 'utf8')
+      if (certPem && certPem.includes('BEGIN CERTIFICATE')) {
+        await secretStore.setSecret('system-ca-cert', certPem)
+      }
+    }
+  } catch { /* 证书读取失败不影响私钥备份 */ }
+
+  // 旧版本遗留的 .pem.moved 备份仍清掉
+  try {
+    const moved = path.join(userBase(), 'dev-sidecar.ca.key.pem.moved')
+    if (fs.existsSync(moved)) {
+      fs.unlinkSync(moved)
+    }
+  } catch { /* ignore */ }
+
+  return { step, action }
 }
 
 /**
