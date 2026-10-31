@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { ACCOUNT_CA_CERT, ACCOUNT_CA_KEY, ensureCaFiles } = require('../src/utils/util.ca-store.js')
+const { ACCOUNT_CA_CERT, ACCOUNT_CA_KEY, prepareCa } = require('../src/utils/util.ca-store.js')
 
 function tmpDir () {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ds-ca-test-'))
@@ -27,42 +27,56 @@ function fakeStore (data = {}) {
   }
 }
 
-describe('ensureCaFiles', () => {
-  it('restores missing CA files from the secret store', async () => {
-    const dir = tmpDir()
-    const certPath = path.join(dir, 'dev-sidecar.ca.crt')
-    const keyPath = path.join(dir, 'dev-sidecar.ca.key.pem')
+function paths () {
+  const dir = tmpDir()
+  return {
+    dir,
+    certPath: path.join(dir, 'dev-sidecar.ca.crt'),
+    keyPath: path.join(dir, 'dev-sidecar.ca.key.pem'),
+  }
+}
+
+describe('prepareCa', () => {
+  it('hands the key to the caller without writing it to disk', async () => {
+    const { certPath, keyPath } = paths()
     const store = fakeStore({ [ACCOUNT_CA_CERT]: 'CERT-PEM', [ACCOUNT_CA_KEY]: 'KEY-PEM' })
 
-    const ret = await ensureCaFiles({ certPath, keyPath, store })
-    assert.equal(ret.restored, true)
-    assert.deepEqual(ret.items.sort(), ['cert', 'key'])
-    assert.equal(fs.readFileSync(certPath, 'utf8'), 'CERT-PEM')
-    assert.equal(fs.readFileSync(keyPath, 'utf8'), 'KEY-PEM')
+    const ret = await prepareCa({ certPath, keyPath, store })
+    assert.equal(ret.keyPem, 'KEY-PEM')
+    assert.equal(ret.restoredCert, true)
+    assert.equal(fs.readFileSync(certPath, 'utf8'), 'CERT-PEM', '证书是公开的，缺失时恢复')
+    assert.equal(fs.existsSync(keyPath), false, '私钥不得写回磁盘')
   })
 
-  it('keeps existing files untouched', async () => {
-    const dir = tmpDir()
-    const certPath = path.join(dir, 'dev-sidecar.ca.crt')
-    const keyPath = path.join(dir, 'dev-sidecar.ca.key.pem')
-    fs.writeFileSync(certPath, 'LOCAL-CERT')
-    fs.writeFileSync(keyPath, 'LOCAL-KEY')
-    const store = fakeStore({ [ACCOUNT_CA_CERT]: 'OTHER', [ACCOUNT_CA_KEY]: 'OTHER' })
+  it('removes a leftover plaintext key that matches the keychain copy', async () => {
+    const { certPath, keyPath } = paths()
+    fs.writeFileSync(certPath, 'CERT-PEM')
+    fs.writeFileSync(keyPath, 'KEY-PEM\n')
+    const store = fakeStore({ [ACCOUNT_CA_CERT]: 'CERT-PEM', [ACCOUNT_CA_KEY]: 'KEY-PEM' })
 
-    const ret = await ensureCaFiles({ certPath, keyPath, store })
-    assert.equal(ret.restored, false)
-    assert.equal(fs.readFileSync(certPath, 'utf8'), 'LOCAL-CERT')
-    assert.equal(fs.readFileSync(keyPath, 'utf8'), 'LOCAL-KEY')
+    const ret = await prepareCa({ certPath, keyPath, store })
+    assert.equal(ret.keyPem, 'KEY-PEM')
+    assert.equal(ret.removedPlaintext, true)
+    assert.equal(fs.existsSync(keyPath), false)
   })
 
-  it('does nothing when the secret store has no CA', async () => {
-    const dir = tmpDir()
-    const certPath = path.join(dir, 'dev-sidecar.ca.crt')
-    const keyPath = path.join(dir, 'dev-sidecar.ca.key.pem')
+  it('keeps the disk key when it is a different CA than the keychain copy', async () => {
+    const { certPath, keyPath } = paths()
+    fs.writeFileSync(certPath, 'CERT-PEM')
+    fs.writeFileSync(keyPath, 'OTHER-KEY')
+    const store = fakeStore({ [ACCOUNT_CA_CERT]: 'CERT-PEM', [ACCOUNT_CA_KEY]: 'KEY-PEM' })
 
-    const ret = await ensureCaFiles({ certPath, keyPath, store: fakeStore() })
-    assert.equal(ret.restored, false)
-    assert.equal(fs.existsSync(certPath), false)
+    const ret = await prepareCa({ certPath, keyPath, store })
+    assert.equal(ret.keyPem, null, '不注入环境变量，沿用磁盘上的 CA')
+    assert.equal(fs.readFileSync(keyPath, 'utf8'), 'OTHER-KEY')
+  })
+
+  it('does nothing when the keychain has no CA key', async () => {
+    const { certPath, keyPath } = paths()
+
+    const ret = await prepareCa({ certPath, keyPath, store: fakeStore() })
+    assert.equal(ret.keyPem, null)
+    assert.equal(ret.restoredCert, false)
     assert.equal(fs.existsSync(keyPath), false)
   })
 })

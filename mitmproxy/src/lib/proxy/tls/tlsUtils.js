@@ -298,7 +298,10 @@ utils.getMappingHostNamesFromCert = function (cert) {
 utils.initCA = function ({ caCertPath, caKeyPath }) {
   try {
     fs.accessSync(caCertPath, fs.F_OK)
-    fs.accessSync(caKeyPath, fs.F_OK)
+    // 私钥由系统密钥库经环境变量注入（磁盘上没有明文文件）时，不因缺少 pem 而换发新 CA
+    if (!process.env.DS_CA_KEY_PEM) {
+      fs.accessSync(caKeyPath, fs.F_OK)
+    }
 
     // has exist
     return {

@@ -35,18 +35,13 @@ function caPemPaths () {
 }
 
 /**
- * v3.0.0 step 1: CA 私钥 pem → SecretStore，删除明文
- */
-/**
- * v3.0.0 step 1: CA 私钥备份进 SecretStore，明文文件**保留**并收紧权限
+ * v3.0.0 step 1: CA 私钥存进 SecretStore，删除磁盘明文；证书一并备份
  *
- * 不删除的原因：代理子进程的 initCA() 需要这两个文件；删掉后它会把
- * 「文件不存在」当成首次运行，直接换发一张新 CA，用户已安装的根证书随即失效，
- * 浏览器表现为间歇性的证书错误。证书也一并备份，文件丢失时能恢复同一 CA。
+ * 删除是安全的：启动代理前 `util.ca-store.prepareCa()` 会从密钥库取出私钥，
+ * 通过环境变量 `DS_CA_KEY_PEM` 交给子进程，`initCA()` 不会再把它当成首次运行。
  */
 async function migrateTo300_caPrivateKey () {
   const step = `${MIGRATION_ID}:ca-key`
-  const keyPath = path.join(userBase(), 'dev-sidecar.ca.key.pem')
   const certPath = path.join(userBase(), 'dev-sidecar.ca.crt')
   let action = 'none'
 
@@ -58,11 +53,9 @@ async function migrateTo300_caPrivateKey () {
       }
       await secretStore.setSecret(ACCOUNT_CA_PEM, pem)
       action = 'stored'
-      if (p === keyPath && process.platform !== 'win32') {
-        try {
-          fs.chmodSync(p, 0o600)
-        } catch { /* 权限收紧失败不影响使用 */ }
-      }
+      try {
+        fs.unlinkSync(p)
+      } catch { /* 删除失败不影响使用：prepareCa 会改用密钥库副本 */ }
     } catch { /* 文件不存在，跳过 */ }
   }
 
@@ -74,14 +67,6 @@ async function migrateTo300_caPrivateKey () {
       }
     }
   } catch { /* 证书读取失败不影响私钥备份 */ }
-
-  // 旧版本遗留的 .pem.moved 备份仍清掉
-  try {
-    const moved = path.join(userBase(), 'dev-sidecar.ca.key.pem.moved')
-    if (fs.existsSync(moved)) {
-      fs.unlinkSync(moved)
-    }
-  } catch { /* ignore */ }
 
   return { step, action }
 }
