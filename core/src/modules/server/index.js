@@ -7,6 +7,8 @@ const event = require('../../event')
 const status = require('../../status')
 const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const log = require('../../utils/util.log.core')
+const secretVault = require('../../utils/util.secret-vault')
+const { writeFilePrivate } = require('../../utils/util.fs-private')
 const { buildRemoteConfigFetchRules } = require('../../config/remote-config-rule')
 
 let server = null
@@ -99,6 +101,7 @@ const serverApi = {
 
     // 插件可以把敏感数据（如系统密钥库里的令牌）以环境变量形式交给子进程，避免写进 running.json。
     // 必须在读取配置之前执行：插件的 prepareEnv 可能顺带把旧版明文配置迁移走。
+    await secretVault.migrate(config)
     const pluginEnv = {}
     for (const key in plugins) {
       const plugin = plugins[key]
@@ -111,6 +114,8 @@ const serverApi = {
         log.warn(`插件【${key}】准备子进程环境变量失败:`, e)
       }
     }
+    // 内建凭据（增强功能口令、P2P 令牌）走同一份快照
+    Object.assign(pluginEnv, await secretVault.prepareEnv())
 
     const allConfig = config.get()
     const serverConfig = lodash.cloneDeep(allConfig.server)
@@ -184,7 +189,7 @@ const serverApi = {
         }
         serverConfig.app.instance = existingInstance
       }
-      fs.writeFileSync(runningConfigPath, jsonApi.stringify(serverConfig))
+      writeFilePrivate(runningConfigPath, jsonApi.stringify(serverConfig))
       log.info('保存 running.json 运行时配置文件成功:', runningConfigPath)
     } catch (e) {
       log.error('保存 running.json 运行时配置文件失败:', runningConfigPath, ', error:', e)

@@ -7,6 +7,7 @@ const log = require('../../../utils/util.log.server')
 const matchUtil = require('../../../utils/util.match')
 const pac = require('./source/pac')
 const dateUtil = require('@blue-frontier/dev-sidecar/src/utils/util.date')
+const { resolvedSnapshot } = require('@blue-frontier/dev-sidecar/src/utils/util.secret-vault')
 
 let pacClient = null
 
@@ -129,6 +130,9 @@ function buildServerList (overWallConfig) {
   const list = []
   const customServer = overWallConfig.server || {}
   const defaultServer = overWallConfig.serverDefault || {}
+  // 口令优先取系统密钥库快照（fork 时以环境变量注入），配置里只留空串
+  const storedPasswords = resolvedSnapshot().overwall || {}
+  const passwordOf = (domain, cfg) => storedPasswords[domain] || (cfg && cfg.password)
 
   // 内置默认服务器 ID 固定为 0；用户自定义服务器在此基础上依次增加
   let nextId = 1
@@ -139,7 +143,7 @@ function buildServerList (overWallConfig) {
         domain,
         port: cfg && cfg.port,
         path: cfg && cfg.path,
-        password: cfg && cfg.password,
+        password: passwordOf(domain, cfg),
       })
     }
   }
@@ -150,7 +154,7 @@ function buildServerList (overWallConfig) {
       domain,
       port: cfg && cfg.port,
       path: cfg && cfg.path,
-      password: cfg && cfg.password,
+      password: passwordOf(domain, cfg),
     }
     if (item.id >= nextId) {
       nextId = item.id + 1

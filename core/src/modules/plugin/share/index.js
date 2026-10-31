@@ -2,11 +2,22 @@
  * L1 节点分享插件：TLS+CONNECT + 配额/卡密
  */
 const shareConfig = require('./config')
+const { vault, ACCOUNT_SHARE } = require('../../utils/util.secret-vault')
 
 const SharePlugin = function (context) {
   const { config, event, log } = context
   let shareServer = null
   let shareInfo = { host: '', port: 0, link: '', publicHost: '', connectionMode: '未启动', nodeId: '' }
+
+  /** 对端令牌存在系统密钥库里，配置里只留 host/port */
+  async function peerToken (peer) {
+    if (peer && peer.token) {
+      return peer.token
+    }
+    const secrets = await vault.readAccount(ACCOUNT_SHARE)
+    const key = peer && `${peer.host}:${peer.port}`
+    return (secrets.peers && secrets.peers[key]) || ''
+  }
 
   const api = {
     async start () {
@@ -14,11 +25,12 @@ const SharePlugin = function (context) {
       const p2p = require('@blue-frontier/mitmproxy/src/lib/p2p')
       const me = p2p.getIdentity()
       shareInfo.nodeId = me.nodeId
+      const secrets = await vault.readAccount(ACCOUNT_SHARE)
 
       shareServer = new p2p.ShareServer({
         host: setting.listenHost,
         port: setting.listenPort,
-        token: setting.token,
+        token: secrets.token || setting.token,
         name: setting.name,
       })
       await shareServer.start()
@@ -133,13 +145,38 @@ const SharePlugin = function (context) {
       return require('@blue-frontier/mitmproxy/src/lib/p2p').getIdentity().nodeId
     },
 
+    /** 是否已保存本节点令牌（不回传内容） */
+    async hasToken () {
+      const secrets = await vault.readAccount(ACCOUNT_SHARE)
+      return !!secrets.token
+    },
+
+    /** 保存本节点令牌到系统密钥库 */
+    async setToken (token) {
+      const value = typeof token === 'string' ? token.trim() : ''
+      if (!value) {
+        throw new Error('令牌不能为空')
+      }
+      const secrets = await vault.readAccount(ACCOUNT_SHARE)
+      secrets.token = value
+      await vault.writeAccount(ACCOUNT_SHARE, secrets)
+      return { ok: true }
+    },
+
+    async clearToken () {
+      const secrets = await vault.readAccount(ACCOUNT_SHARE)
+      delete secrets.token
+      await vault.writeAccount(ACCOUNT_SHARE, secrets)
+      return { ok: true }
+    },
+
     /** 查询对端 nodeId（需 token） */
     async getPeerInfo (peer) {
       const p2p = require('@blue-frontier/mitmproxy/src/lib/p2p')
       return p2p.upstream.getPeerInfo({
         host: peer.host,
         port: peer.port,
-        token: peer.token,
+        token: await peerToken(peer),
       })
     },
 
@@ -150,7 +187,7 @@ const SharePlugin = function (context) {
       const res = await p2p.upstream.redeemCardOnPeer({
         host: peer.host,
         port: peer.port,
-        token: peer.token,
+        token: await peerToken(peer),
       }, card, me.nodeId)
       return res.body || { ok: false, reason: `HTTP ${res.status}` }
     },
@@ -181,11 +218,17 @@ const SharePlugin = function (context) {
         throw new Error('无效的 ds-p2p:// 链接')
       }
       peer.tls = true
-      peer.uri = uri
+      // 令牌与原始链接都不进配置文件
+      const secrets = await vault.readAccount(ACCOUNT_SHARE)
+      if (peer.token) {
+        secrets.peers = secrets.peers || {}
+        secrets.peers[`${peer.host}:${peer.port}`] = peer.token
+      }
+      await vault.writeAccount(ACCOUNT_SHARE, secrets)
       const list = (config.get().plugin.share.setting.peers || []).filter(
         (p) => !(p.host === peer.host && p.port === peer.port),
       )
-      list.push(peer)
+      list.push({ host: peer.host, port: peer.port, tls: true })
       await config.update({ plugin: { share: { setting: { peers: list } } } })
       return peer
     },
@@ -194,11 +237,17 @@ const SharePlugin = function (context) {
       const p2p = require('@blue-frontier/mitmproxy/src/lib/p2p')
       const parsed = p2p.parsePeerList(text)
       let list = (config.get().plugin.share.setting.peers || []).slice()
+      const secrets = await vault.readAccount(ACCOUNT_SHARE)
+      secrets.peers = secrets.peers || {}
       for (const peer of parsed) {
         peer.tls = true
+        if (peer.token) {
+          secrets.peers[`${peer.host}:${peer.port}`] = peer.token
+        }
         list = list.filter((p) => !(p.host === peer.host && p.port === peer.port))
-        list.push(peer)
+        list.push({ host: peer.host, port: peer.port, tls: true })
       }
+      await vault.writeAccount(ACCOUNT_SHARE, secrets)
       await config.update({ plugin: { share: { setting: { peers: list } } } })
       return parsed
     },

@@ -11,6 +11,7 @@ const { REMOTE_CONFIG_URL_KEYS, isPlainHttpUrl, toHttpsUrl } = require('./config
 const mergeApi = require('./merge.js')
 const Shell = require('./shell')
 const log = require('./utils/util.log.core')
+const { writeFilePrivate } = require('./utils/util.fs-private')
 
 /**
  * 远程配置下载超时（毫秒）。
@@ -232,7 +233,7 @@ const configApi = {
     // 将差异作为用户配置保存到 config.json 中
     const configPath = configLoader.getUserConfigPath()
     try {
-      fs.writeFileSync(configPath, serviceGroup.preserveComments(configPath, jsonApi.stringify(diffConfig)))
+      writeFilePrivate(configPath, serviceGroup.preserveComments(configPath, jsonApi.stringify(diffConfig)))
       log.info('保存 config.json 自定义配置文件成功:', configPath)
     } catch (e) {
       log.error('保存 config.json 自定义配置文件失败:', configPath, ', error:', e)
@@ -324,7 +325,7 @@ const configApi = {
         return
       }
 
-      fs.writeFileSync(configPath, serviceGroup.preserveComments(configPath, jsonApi.stringify(userConfig)))
+      writeFilePrivate(configPath, serviceGroup.preserveComments(configPath, jsonApi.stringify(userConfig)))
       log.info('保存 config.json（远程配置地址 HTTPS 改写）成功:', configPath)
     } catch (e) {
       // 持久化失败不影响本次运行：内存中的 configTarget 已是 https 地址
@@ -348,7 +349,7 @@ const configApi = {
       const fileStr = fileOriginalStr.replace(/\s/g, '')
       if (fileStr.length < 5) {
         try {
-          fs.writeFileSync(configPath, '{}')
+          writeFilePrivate(configPath, '{}')
         } catch (e) {
           log.warn('简化用户配置文件失败:', configPath, ', error:', e)
         }
@@ -366,7 +367,7 @@ const configApi = {
       }
       // 原配置文件内容设为空
       try {
-        fs.writeFileSync(configPath, '{}')
+        writeFilePrivate(configPath, '{}')
       } catch (e) {
         log.error('初始化用户配置文件失败:', configPath, ', error:', e)
         throw e
