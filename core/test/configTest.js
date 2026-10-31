@@ -57,6 +57,56 @@ describe('local config null deletion markers', () => {
   })
 })
 
+describe('xget overlay cloudflare access headers', () => {
+  function xgetConfig (setting) {
+    return { plugin: { xget: { enabled: true, setting } } }
+  }
+
+  function walkRules (overlay, visit) {
+    const intercepts = overlay.server.intercepts
+    for (const host of Object.keys(intercepts)) {
+      const pathRules = intercepts[host]
+      for (const pathRegex of Object.keys(pathRules)) {
+        visit(pathRules[pathRegex])
+      }
+    }
+  }
+
+  it('injects cf access headers into every rule when both tokens are set', () => {
+    const overlay = configLoader.getXgetOverlay(xgetConfig({
+      instanceUrl: 'https://xget.example.com',
+      cfAccessClientId: ' client-id ',
+      cfAccessClientSecret: ' secret ',
+    }))
+    let ruleCount = 0
+    walkRules(overlay, (rule) => {
+      assert.equal(rule.requestReplace.headers['cf-access-client-id'], 'client-id')
+      assert.equal(rule.requestReplace.headers['cf-access-client-secret'], 'secret')
+      ruleCount++
+    })
+    assert.ok(ruleCount > 0, '覆盖层应包含规则')
+  })
+
+  it('leaves rules untouched when tokens are missing or half-filled', () => {
+    const settings = [
+      { instanceUrl: 'https://xget.example.com' },
+      { instanceUrl: 'https://xget.example.com', cfAccessClientId: 'only-id' },
+      { instanceUrl: 'https://xget.example.com', cfAccessClientSecret: 'only-secret' },
+    ]
+    for (const setting of settings) {
+      const overlay = configLoader.getXgetOverlay(xgetConfig(setting))
+      walkRules(overlay, (rule) => {
+        assert.equal(rule.requestReplace, undefined)
+      })
+    }
+  })
+
+  it('returns null when the plugin is disabled or the instance url is empty', () => {
+    assert.equal(configLoader.getXgetOverlay({ plugin: { xget: { enabled: false, setting: { instanceUrl: 'https://xget.example.com' } } } }), null)
+    assert.equal(configLoader.getXgetOverlay(xgetConfig({ instanceUrl: ' ' })), null)
+  })
+})
+
 describe('remote config version selection', () => {
   let home
   let previousUserProfile
