@@ -72,28 +72,40 @@ describe('xget overlay cloudflare access headers', () => {
     }
   }
 
-  it('injects cf access headers into every rule when both tokens are set', () => {
+  const SECRET_PLACEHOLDER = '$' + '{env:DS_XGET_CF_ACCESS_SECRET}'
+
+  it('adds the placeholder secret header to every rule when client id is set', () => {
     const overlay = configLoader.getXgetOverlay(xgetConfig({
       instanceUrl: 'https://xget.example.com',
       cfAccessClientId: ' client-id ',
-      cfAccessClientSecret: ' secret ',
     }))
     let ruleCount = 0
     walkRules(overlay, (rule) => {
       assert.equal(rule.requestReplace.headers['cf-access-client-id'], 'client-id')
-      assert.equal(rule.requestReplace.headers['cf-access-client-secret'], 'secret')
+      // Secret 不落盘：规则里只允许出现占位符
+      assert.equal(rule.requestReplace.headers['cf-access-client-secret'], SECRET_PLACEHOLDER)
       ruleCount++
     })
     assert.ok(ruleCount > 0, '覆盖层应包含规则')
   })
 
-  it('leaves rules untouched when tokens are missing or half-filled', () => {
-    const settings = [
+  it('never writes the legacy plaintext secret into rules', () => {
+    const overlay = configLoader.getXgetOverlay(xgetConfig({
+      instanceUrl: 'https://xget.example.com',
+      cfAccessClientId: 'client-id',
+      cfAccessClientSecret: 'legacy-plaintext-secret',
+    }))
+    assert.equal(JSON.stringify(overlay).includes('legacy-plaintext-secret'), false, '旧明文令牌不得出现在规则里')
+    walkRules(overlay, (rule) => {
+      assert.equal(rule.requestReplace.headers['cf-access-client-secret'], SECRET_PLACEHOLDER)
+    })
+  })
+
+  it('leaves rules untouched when the client id is empty', () => {
+    for (const setting of [
       { instanceUrl: 'https://xget.example.com' },
-      { instanceUrl: 'https://xget.example.com', cfAccessClientId: 'only-id' },
-      { instanceUrl: 'https://xget.example.com', cfAccessClientSecret: 'only-secret' },
-    ]
-    for (const setting of settings) {
+      { instanceUrl: 'https://xget.example.com', cfAccessClientId: ' ' },
+    ]) {
       const overlay = configLoader.getXgetOverlay(xgetConfig(setting))
       walkRules(overlay, (rule) => {
         assert.equal(rule.requestReplace, undefined)

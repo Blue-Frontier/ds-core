@@ -5,6 +5,11 @@ const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const mergeApi = require('../merge')
 const logOrConsole = require('../utils/util.log-or-console')
 
+// Xget 的 CF Access 服务令牌占位符：真实值由代理子进程从环境变量读取，避免密钥写进 running.json
+//（与 modules/plugin/xget 的 CF_ACCESS_SECRET_ENV 对应）
+// eslint-disable-next-line no-template-curly-in-string
+const CF_ACCESS_SECRET_PLACEHOLDER = '${env:DS_XGET_CF_ACCESS_SECRET}'
+
 function getUserBasePath (autoCreate = true) {
   const userHome = process.env.USERPROFILE || process.env.HOME || '/'
   const dir = path.resolve(userHome, './.dev-sidecar')
@@ -262,11 +267,12 @@ function getXgetOverlay (userConfig) {
     return null
   }
 
-  // 可选：Cloudflare Access 服务令牌。两项都填写时才注入，避免半配置产生无效请求头
+  // 可选：Cloudflare Access 服务令牌。Secret 不落盘——规则里只写占位符，
+  // 真实值由代理子进程从环境变量（DS_XGET_CF_ACCESS_SECRET）读取并替换；
+  // 未保存令牌时占位符解析为空，requestReplace 会直接跳过这个请求头。
   const cfAccessClientId = normalizeToken(xget.setting.cfAccessClientId)
-  const cfAccessClientSecret = normalizeToken(xget.setting.cfAccessClientSecret)
-  if (cfAccessClientId && cfAccessClientSecret) {
-    applyCfAccessHeaders(overlay, cfAccessClientId, cfAccessClientSecret)
+  if (cfAccessClientId) {
+    applyCfAccessHeaders(overlay, cfAccessClientId, CF_ACCESS_SECRET_PLACEHOLDER)
   }
   return overlay
 }

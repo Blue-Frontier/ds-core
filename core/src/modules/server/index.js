@@ -97,6 +97,21 @@ const serverApi = {
       return { port: server.port }
     }
 
+    // 插件可以把敏感数据（如系统密钥库里的令牌）以环境变量形式交给子进程，避免写进 running.json。
+    // 必须在读取配置之前执行：插件的 prepareEnv 可能顺带把旧版明文配置迁移走。
+    const pluginEnv = {}
+    for (const key in plugins) {
+      const plugin = plugins[key]
+      if (!plugin || typeof plugin.prepareEnv !== 'function') {
+        continue
+      }
+      try {
+        Object.assign(pluginEnv, (await plugin.prepareEnv()) || {})
+      } catch (e) {
+        log.warn(`插件【${key}】准备子进程环境变量失败:`, e)
+      }
+    }
+
     const allConfig = config.get()
     const serverConfig = lodash.cloneDeep(allConfig.server)
 
@@ -138,6 +153,10 @@ const serverApi = {
       }
     }
     serverConfig.plugin = lodash.cloneDeep(allConfig.plugin || {})
+    // 安全：旧版写在配置里的明文 CF Access 令牌不进入 running.json（反馈打包会带上该文件）
+    if (serverConfig.plugin.xget && serverConfig.plugin.xget.setting) {
+      delete serverConfig.plugin.xget.setting.cfAccessClientSecret
+    }
     if (setting && setting.overwall !== true && serverConfig.plugin.overwall) {
       // setting.json 未开启 overwall 时，增强功能插件不生效
       serverConfig.plugin.overwall.enabled = false
@@ -171,7 +190,7 @@ const serverApi = {
       log.error('保存 running.json 运行时配置文件失败:', runningConfigPath, ', error:', e)
       throw e
     }
-    const serverProcess = fork(mitmproxyPath, [runningConfigPath])
+    const serverProcess = fork(mitmproxyPath, [runningConfigPath], Object.keys(pluginEnv).length > 0 ? { env: { ...process.env, ...pluginEnv } } : undefined)
     server = {
       id: serverProcess.pid,
       process: serverProcess,
