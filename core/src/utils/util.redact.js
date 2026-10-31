@@ -5,6 +5,9 @@
 const SECRET_QUERY_KEYS = /([?&](?:token|password|passwd|pwd|secret|key|code|auth|signature|sig|access_token)=)[^&\s]+/gi
 const AUTH_HEADER = /((?:proxy-)?authorization\s*[:=]\s*)\S+/gi
 const PASSWORD_KV = /((?:dspassword|password|passwd|token|secret|privateKey|private_key)\s*[:=]\s*)\S+/gi
+// JSON 形式的凭据：配置/日志里常见 `"password": "...、`"token": "...`。
+// 上一条规则要求关键字后紧跟冒号，引号会打断匹配，所以单独补一条（覆盖 cookie / authorization 等）。
+const JSON_SECRET_KV = /("(?=[\w.-]*(?:dspassword|password|passwd|pwd|token|secret|privateKey|private_key|authorization|cookie))[\w.-]+"\s*:\s*")[^"]*(")/gi
 const DS_BLOB = /\b(ds-(?:p2p|card):\/\/)[A-Za-z0-9._-]+/g
 const MAX_TEXT = 8000
 const MAX_JSON = 2000
@@ -43,6 +46,7 @@ function redactText (text) {
   s = s.replace(AUTH_HEADER, '$1***')
   s = s.replace(SECRET_QUERY_KEYS, '$1***')
   s = s.replace(PASSWORD_KV, '$1***')
+  s = s.replace(JSON_SECRET_KV, '$1***$2')
   s = s.replace(/\bhttps?:\/\/[^\s"'<>]+/gi, (m) => redactUrl(m))
   return s
 }
