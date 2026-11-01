@@ -323,13 +323,54 @@ function getDomesticDomainAllowList () {
   }
 }
 
-function getProxyExcludeIpStr (split) {
+/**
+ * 把 IPv4 尾部通配符转成 CIDR：192.168.*.* → 192.168.0.0/16。
+ *
+ * GNOME 的 ignore-hosts 只认「精确 IP / CIDR / 域名后缀」，`192.168.*.*` 会被当成域名后缀，
+ * 永远匹配不到（glib gsimpleproxyresolver.c 的 reparse_ignore_hosts）；
+ * 而 libproxy 等后端依赖 fnmatch 通配。因此 Linux 上两种形式都写入，让不同后端都能命中。
+ *
+ * @returns {string|null} CIDR；不是「尾部连续通配」的 IPv4 时返回 null
+ */
+function ipv4WildcardToCidr (host) {
+  if (typeof host !== 'string') {
+    return null
+  }
+  const parts = host.split('.')
+  if (parts.length !== 4) {
+    return null
+  }
+  let firstWildcard = -1
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] === '*') {
+      if (firstWildcard < 0) {
+        firstWildcard = i
+      }
+      continue
+    }
+    if (!/^\d{1,3}$/.test(parts[i]) || Number.parseInt(parts[i], 10) > 255 || firstWildcard >= 0) {
+      // 通配符只能连续出现在尾部，且每段必须是合法 IPv4 段值
+      return null
+    }
+  }
+  if (firstWildcard <= 0) {
+    // 没有通配符，或 *.*.*.*（等价于排除所有）
+    return null
+  }
+  const octets = parts.slice(0, firstWildcard).concat(Array.from({ length: 4 - firstWildcard }, () => '0'))
+  return `${octets.join('.')}/${firstWildcard * 8}`
+}
+
+function getProxyExcludeIpStr (split, transformHost) {
   const proxyExcludeIpConfig = config.get().proxy.excludeIpList
 
   let excludeIpStr = ''
   for (const ip in proxyExcludeIpConfig) {
     if (proxyExcludeIpConfig[ip] === true) {
-      excludeIpStr += ip + split
+      const hosts = transformHost ? transformHost(ip) : [ip]
+      for (const host of hosts) {
+        excludeIpStr += host + split
+      }
     }
   }
 
@@ -826,7 +867,11 @@ const executor = {
       }
 
       // 设置排除域名（ignore-hosts）
-      const excludeIpStr = getProxyExcludeIpStr('\', \'')
+      // 同时写入 CIDR 与原始通配符：GNOME（glib）只认 CIDR，libproxy 只认 fnmatch 通配
+      const excludeIpStr = getProxyExcludeIpStr('\', \'', (host) => {
+        const cidr = ipv4WildcardToCidr(host)
+        return cidr ? [host, cidr] : [host]
+      })
       setProxyCmd.push(`gsettings set org.gnome.system.proxy ignore-hosts "['${excludeIpStr}']"`)
 
       try {
@@ -911,3 +956,4 @@ module.exports = setSystemProxy
 module.exports.parseMacNetworkServiceByDevice = parseMacNetworkServiceByDevice
 module.exports.parseMacRouteDevice = parseMacRouteDevice
 module.exports.pickMacNetworkService = pickMacNetworkService
+module.exports.ipv4WildcardToCidr = ipv4WildcardToCidr
