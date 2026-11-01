@@ -1,7 +1,6 @@
 const http = require('node:http')
 const https = require('node:https')
 const net = require('node:net')
-const tls = require('node:tls')
 const { pipeline } = require('node:stream')
 const jsonApi = require('../../../json')
 const log = require('../../../utils/util.log.server')
@@ -14,6 +13,7 @@ const compatible = require('../compatible/compatible')
 const echUtil = require('../common/ech')
 const InsertScriptMiddleware = require('../middleware/InsertScriptMiddleware')
 const dnsLookup = require('./dnsLookup')
+const { applyTlsVerifyPolicy } = require('./tlsVerify')
 
 const MAX_SLOW_TIME = 8000 // 超过此时间 则认为太慢了
 const CONNECT_TIMEOUT_MS = 7000 // 上游建连（含 TLS 握手）超时：SNI 伪装 + 跨境线路下握手可能偏慢，5s 会误杀可用 IP
@@ -208,6 +208,10 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             reqIncpts.push(middleware)
           }
           if (reqIncpts && reqIncpts.length > 0) {
+            // 拦截器返回值契约：
+            //   undefined（及其它 falsy）→ 只改过 rOptions / context，继续执行下一个拦截器；
+            //   truthy → 该拦截器已处理完请求，不再执行后续拦截器；
+            //   'no-next' → 同上，但由拦截器自己收尾（它已异步调用 next，例如 baiduOcr）。
             for (const reqIncpt of reqIncpts) {
               if (!reqIncpt.requestIntercept) {
                 continue
@@ -246,19 +250,9 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
     const proxyRequestPromise = async () => {
       rOptions.host = rOptions.hostname || rOptions.host || 'localhost'
       // TLS：SNI 可按配置伪装（如 sni: baidu.com）防阻断；
-      // 证书校验默认用真实域名（不能用伪装 SNI，也不能留空，否则会变成 Host: none）；
-      // 但规则里显式配置了 verifyHost 时用它校验 —— 用于「换 SNI 敲门」类规则
-      // （如 huggingface.co 用 huggingface.cn 的 SNI 连，服务器返回的就是 huggingface.cn 的证书）。
-      if (rOptions.protocol === 'https:' && rOptions.hostname) {
-        const realHost = rOptions.hostname
-        if (rOptions.servername == null) {
-          rOptions.servername = realHost
-        }
-        const verifyHost = (rOptions.verifyHost != null && rOptions.verifyHost !== '') ? rOptions.verifyHost : realHost
-        if (rOptions.servername !== realHost || verifyHost !== realHost) {
-          rOptions.checkServerIdentity = (_host, cert) => tls.checkServerIdentity(verifyHost, cert)
-        }
-      }
+      // 证书校验策略见 tlsVerify.applyTlsVerifyPolicy（默认真实域名 / verifyHost 覆盖，
+      // 免校验必须显式配置 unVerifySsl 或 ssl:false）
+      applyTlsVerifyPolicy(rOptions, log)
 
       // 首次发送前缓存小请求体；建连失败（SNI 伪装下偶发）时可安全重试（git-upload-pack 体通常很小）
       if (context.retryBody == null) {
@@ -586,6 +580,9 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             proxyReq.end()
           } else {
             req.pipe(proxyReq)
+            // 大文件上传（如 GitHub Release）期间只有请求体在流动，没有响应可写；
+            // 请求体流量也要刷新空响应 guard 的活动时间，否则上传超过 60 秒会被误判为上游无响应并 504
+            req.on('data', markActivity)
           }
         }
       })

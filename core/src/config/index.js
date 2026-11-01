@@ -699,6 +699,7 @@ Object.assign(defaultConfig.server, {
     'github.com': {
       '^(/[^/]+){2,}/?(\\?.*)?$': {
         sni: 'baidu.com',
+        unVerifySsl: true,
         tampermonkeyScript: 'https://ds-official-config.bestar.de5.net/tampermonkey.js',
         script: 'https://ds-official-config.bestar.de5.net/GithubEnhanced-High-Speed-Download.user.js',
         remark: '注：上面所使用的脚本地址，为高速镜像地址。',
@@ -707,11 +708,13 @@ Object.assign(defaultConfig.server, {
       '^(/[\\w-.]+){2,}/?(\\?.*)?$': null,
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.(jpg|jpeg|png|gif))(\\?.*)?$': {
         sni: 'baidu.com',
+        unVerifySsl: true,
         cacheDays: 365,
         desc: '仓库内图片重定向，缓存1年。',
       },
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.js)(\\?.*)?$': {
         sni: 'baidu.com',
+        unVerifySsl: true,
         responseReplace: {
           headers: {
             'content-type': 'application/javascript; charset=utf-8',
@@ -721,11 +724,13 @@ Object.assign(defaultConfig.server, {
       },
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'api.github.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'github.githubassets.com': {
@@ -738,6 +743,7 @@ Object.assign(defaultConfig.server, {
       '^(/[^/]+)*/[^./]+\\.(svg|png|gif|jpg|jpeg|ico|js|css)(\\?.*)?$': {
         cacheDays: 365,
         sni: 'baidu.com',
+        unVerifySsl: true,
         desc: '图片、JS文件、CSS文件，缓存1年',
       },
     },
@@ -747,11 +753,13 @@ Object.assign(defaultConfig.server, {
       },
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.githubusercontent.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
         requestReplace: {
           headers: {
             'accept-language': 'en-US,en;q=0.8',
@@ -767,21 +775,25 @@ Object.assign(defaultConfig.server, {
       },
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.github.io': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.gravatar.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.windows.net': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '(userlocations|locationhistory-pa|locationhistoryaggregates-pa|locationhistoryplacedetails-pa).googleapis.com': {
@@ -792,6 +804,7 @@ Object.assign(defaultConfig.server, {
     '*.googleapis.com': {
       '.*': {
         sni: 'www.google.cn',
+        unVerifySsl: true,
       },
     },
     'fonts.googleapis.com': {
@@ -814,23 +827,27 @@ Object.assign(defaultConfig.server, {
     '^(?!.*(translate-pa).google(?:apis|usercontent)?.com).*google(?:apis|usercontent)?.com$': {
       '.*': {
         sni: 'www.google.cn',
+        unVerifySsl: true,
         desc: '部分需要走其它代理的服务',
       },
     },
     '^.*(youtube.com|gstatic.com|youtube.nocookie.com|youtu.be|ggpht.com|i.ytimg.com|blogger.com|doodles.google|about.google|android.com)$': {
       '.*': {
         sni: 'www.google.cn',
+        unVerifySsl: true,
       },
     },
     '^.*\\.google\\.com(\\.\\w+)?$': {
       '.*': {
         sni: 'www.google.cn',
+        unVerifySsl: true,
       },
     },
     '^(?<pre>.*).googlevideo.com$': {
       '.*': {
         proxy: '\${pre}.xn--ngstr-lra8j.com',
         sni: 'g.cn',
+        unVerifySsl: true,
         options: true,
       },
     },
@@ -848,16 +865,19 @@ Object.assign(defaultConfig.server, {
     '*.pixiv.org': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.pximg.net': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.nikke-global.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'i.pximg.net': {
@@ -874,26 +894,31 @@ Object.assign(defaultConfig.server, {
     '*.youtube.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.youtu.be': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.youtube-nocookie.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*.ggpht.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'i.ytimg.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'cdn.jsdelivr.net': {
@@ -913,41 +938,49 @@ Object.assign(defaultConfig.server, {
     'update.greasyfork.org': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'cn.vuejs.org': {
       '.*': {
         sni: 'vuejs.org',
+        unVerifySsl: true,
       },
     },
     '*z-library.sk': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*z-lib.help': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '^.*(wikipedia|wikimedia|wikinews|wiktionary|wikiversity|wikidata|wikiquote|wikivoyage|wikifunctions|wikibooks).org$': {
       '.*': {
         sni: 'mediawiki.org',
+        unVerifySsl: true,
       },
     },
     '*w.wiki': {
       '.*': {
         sni: 'mediawiki.org',
+        unVerifySsl: true,
       },
     },
     '*reddit.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*redditstatic.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'redd.it': {
@@ -958,63 +991,75 @@ Object.assign(defaultConfig.server, {
     '*redd.it': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*redditmedia.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*steamcommunity.com': {
       '^(?!/discussions|/Profile|/app.*/discussions).*$': {
         sni: 'baidu.com',
+        unVerifySsl: true,
         desc: '讨论区锁区,考虑不拦截丢给彩蛋',
       },
     },
     '^(?!.*cloudflare).*steamstatic.com$': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
         desc: 'steam社区数据不能也不需调整sni,直接直连',
       },
     },
     '^(store|checkout).steampowered.com$': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'external-content.duckduckgo.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*duckduckgo.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*dropbox.com': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*f-droid.org': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     'fdroid.org': {
       '.*': {
         sni: 'baidu.com',
+        unVerifySsl: true,
       },
     },
     '*apkmirror.com': {
       '.*': {
         sni: 'none',
+        unVerifySsl: true,
       },
     },
     '*.claude.ai': {
       '.*': {
         sni: 'claude.ai',
+        unVerifySsl: true,
       },
     },
     'jsd.proxy.aks.moe': {
@@ -1085,21 +1130,25 @@ Object.assign(defaultConfig.server, {
     '*.instagram.com': {
       '.*': {
         sni: 'g.cn',
+        unVerifySsl: true,
       },
     },
     '*.cdninstagram.com': {
       '.*': {
         sni: 'g.cn',
+        unVerifySsl: true,
       },
     },
     '*.intercom.io': {
       '.*': {
         sni: 'g.cn',
+        unVerifySsl: true,
       },
     },
     '*startpage.com': {
       '.*': {
         sni: 'www.baidu.com',
+        unVerifySsl: true,
       },
     },
   },

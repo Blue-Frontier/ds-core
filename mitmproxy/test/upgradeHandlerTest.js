@@ -222,5 +222,31 @@ const settings = { verifySsl: true }
   console.log('√ 非 101：状态行+响应头透传给客户端')
 })()
 
+// 测 6: sni 与 unVerifySsl 在升级路径上同时生效（升级路径会执行所有拦截器）
+;(function testSniAndUnVerifySslCompose () {
+  const sni = require('../src/lib/interceptor/impl/req/sni')
+  const unVerifySsl = require('../src/lib/interceptor/impl/req/unVerifySsl')
+  const rule = { sni: '', unVerifySsl: true }
+  const fakeReq = {
+    url: '/',
+    method: 'GET',
+    headers: { host: 'ws.example.com:443', upgrade: 'websocket', connection: 'Upgrade' },
+    socket: {},
+  }
+  const createIntercepts = () => [
+    { name: 'sni', priority: 123, requestIntercept: (ctx, req, res, ssl, next) => sni.requestIntercept(ctx, rule, req, res, ssl, next) },
+    { name: 'unVerifySsl', priority: 124, requestIntercept: (ctx, req, res, ssl, next) => unVerifySsl.requestIntercept(ctx, rule, req, res, ssl, next) },
+  ]
+  const handler = createUpgradeHandler(settings, null, null, createIntercepts)
+  const { captured, restore } = captureRequest()
+  handler(fakeReq, { destroyed: false, end: () => {}, write: () => {} }, null, true)
+  restore()
+  assert.strictEqual(captured.httpsOpts.servername, '', 'sni:"" 的禁用语义应用到升级路径')
+  assert.strictEqual(captured.httpsOpts.agent.options.rejectUnauthorized, false, 'unVerifySsl 同样应用到升级路径')
+  assert.ok(captured.httpsOpts.agent.verifySslAgent, '免校验 agent 保留反向引用')
+  assert.strictEqual(captured.httpsOpts.agent.verifySslAgent.options.rejectUnauthorized, true, '反向引用指回校验版 agent')
+  console.log('√ 升级路径：sni 与 unVerifySsl 组合生效')
+})()
+
 console.log('')
 console.log('upgradeHandler sni/verifyHost/dns/502/非101 行为测试全部通过')

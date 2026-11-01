@@ -86,6 +86,9 @@ function createHttpsAgent (timeoutConfig, verifySsl) {
       maxVersion,
     })
 
+    // 反向引用：请求目标被改写到别处时（overwall），需要把校验策略恢复成默认
+    agent.unVerifySslAgent.verifySslAgent = agent
+
     httpsAgentCache[key] = agent
     log.info('创建 HttpsAgent 成功, timeoutConfig:', timeoutConfig, ', verifySsl:', verifySsl)
   }

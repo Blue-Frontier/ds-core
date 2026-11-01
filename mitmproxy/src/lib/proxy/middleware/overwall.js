@@ -6,6 +6,7 @@ const request = require('request')
 const log = require('../../../utils/util.log.server')
 const matchUtil = require('../../../utils/util.match')
 const pac = require('./source/pac')
+const { restoreVerifySslAgent } = require('../../interceptor/impl/req/interceptorUtil')
 const dateUtil = require('@blue-frontier/dev-sidecar/src/utils/util.date')
 const { resolvedSnapshot } = require('@blue-frontier/dev-sidecar/src/utils/util.secret-vault')
 
@@ -244,6 +245,15 @@ function createOverwallMiddleware (overWallConfig) {
       } else {
         rOptions.port = port || (rOptions.protocol === 'https:' ? 443 : 80)
       }
+
+      // 目标是 overwall 服务器：不能沿用原域名的 SNI 伪装与证书校验域名，
+      // 否则 sni 拦截器先写下的 servername 会被带到 overwall 服务器的 TLS 握手上。
+      // （sni 拦截器改为只改 rOptions 后，overwall 才会在它之后执行到）
+      delete rOptions.servername
+      delete rOptions.verifyHost
+      // 同理，原域名规则里的 unVerifySsl 也不应作用到新目标上
+      restoreVerifySslAgent(rOptions)
+
       log.info('OverWall:', rOptions.hostname, '➜', proxyTarget, `, serverId: ${serverId}`)
 
       res.setHeader('DS-Overwall', `${target.source}:${serverId}`)

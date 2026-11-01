@@ -1,19 +1,19 @@
+const { appendInterceptorLabel, applyUnVerifySslAgent } = require('./interceptorUtil')
+
 module.exports = {
   name: 'unVerifySsl',
   priority: 124,
-  requestIntercept (context, interceptOpt, req, res, ssl, next) {
+  requestIntercept (context, interceptOpt, req, res) {
     const { rOptions, log } = context
 
-    if (rOptions.agent && rOptions.agent.options.rejectUnauthorized && rOptions.agent.unVerifySslAgent) {
-      rOptions.agent = rOptions.agent.unVerifySslAgent
+    // 只改 rOptions，返回 undefined 让拦截器链继续（与 sni 等修改型拦截器叠加）
+    if (applyUnVerifySslAgent(rOptions)) {
       log.info(`unVerifySsl intercept: ${rOptions.hostname}, unVerifySsl`)
-      res.setHeader('DS-Interceptor', 'unVerifySsl')
+      appendInterceptorLabel(res, 'unVerifySsl')
     } else {
       log.info(`unVerifySsl intercept: ${rOptions.hostname}, already unVerifySsl`)
-      res.setHeader('DS-Interceptor', 'already unVerifySsl')
+      appendInterceptorLabel(res, 'already unVerifySsl')
     }
-
-    return true
   },
   is (interceptOpt) {
     return interceptOpt.unVerifySsl === true || interceptOpt.ssl === false

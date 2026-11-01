@@ -1,11 +1,11 @@
 const http = require('node:http')
 const https = require('node:https')
-const tls = require('node:tls')
 const net = require('node:net')
 const log = require('../../../utils/util.log.server')
 const util = require('../common/util')
 const DnsUtil = require('../../dns')
 const dnsLookup = require('./dnsLookup')
+const { applyTlsVerifyPolicy } = require('./tlsVerify')
 
 // copy from node-http-proxy.  ^_^
 
@@ -51,17 +51,8 @@ module.exports = function createUpgradeHandler (serverSetting, externalProxy, dn
       }
     }
 
-    // 证书校验：verifyHost 与常规请求路径一致（sni.js 拦截器会把 verifyHost 写到 rOptions 上）
-    if (ssl && clientOptions.protocol === 'https:' && clientOptions.hostname) {
-      const realHost = clientOptions.hostname
-      if (clientOptions.servername == null) {
-        clientOptions.servername = realHost
-      }
-      const verifyHost = (clientOptions.verifyHost != null && clientOptions.verifyHost !== '') ? clientOptions.verifyHost : realHost
-      if (clientOptions.servername !== realHost || verifyHost !== realHost) {
-        clientOptions.checkServerIdentity = (_host, cert) => tls.checkServerIdentity(verifyHost, cert)
-      }
-    }
+    // 证书校验：与常规请求路径共用同一套策略（默认真实域名 / verifyHost 覆盖 / 显式 unVerifySsl）
+    applyTlsVerifyPolicy(clientOptions, log)
 
     // DNS 优选：intercepted 域名的自定义 DNS 映射同样作用于升级路径
     if (clientOptions.hostname && dnsConfig && dnsConfig.dnsMap && !net.isIP(clientOptions.hostname)) {

@@ -122,9 +122,16 @@ function buildRemoteConfigFetchRules ({ remoteConfig, providers, patch }) {
       continue
     }
     if (sni !== null && sni !== undefined) {
-      result.intercepts[hostname] = {
-        '.*': { sni, remark: '内置：远程配置拉取（默认对抗策略）' },
+      const rule = {
+        sni,
+        remark: '内置：远程配置拉取（默认对抗策略）',
       }
+      if (sni !== hostname) {
+        // SNI 诱饵会让上游返回的证书与真实域名不符，拉取阶段必须显式关闭校验
+        // （sni 本身不再隐式免校验，行为与旧版保持一致）
+        rule.unVerifySsl = true
+      }
+      result.intercepts[hostname] = { '.*': rule }
     }
     result.dnsMapping[hostname] = picked.name
     const preSet = preSetIpListAll != null ? preSetIpListAll[hostname] : null

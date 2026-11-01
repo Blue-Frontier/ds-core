@@ -1,4 +1,5 @@
 const URL = require('node:url')
+const { applyUnVerifySslAgent, applyVerifyHost, joinLabels } = require('./interceptorUtil')
 
 const PLACEHOLDER_RE = /\$\{[^}]+\}/g
 
@@ -131,37 +132,26 @@ module.exports = {
       log.info('proxy choice:', JSON.stringify(context.requestCount))
     }
 
-    // verifyHost：显式指定证书校验用的域名（用途见 sni.js 的 applyVerifyHost 说明）
-    if (interceptOpt.verifyHost != null && interceptOpt.verifyHost !== '') {
-      rOptions.verifyHost = interceptOpt.verifyHost
-    }
+    // verifyHost：显式指定证书校验用的域名（用途见 interceptorUtil.applyVerifyHost 说明）
+    const verifyHostLabel = applyVerifyHost(rOptions, interceptOpt)
 
-    if (interceptOpt.sni) {
-      let unVerifySsl = rOptions.agent && rOptions.agent.options.rejectUnauthorized === false
-
+    // sni：空字符串表示不发送 SNI 扩展，与 sni 拦截器的语义保持一致
+    const sniLabel = interceptOpt.sni == null
+      ? null
+      : (interceptOpt.sni === '' ? 'sni: (disabled)' : `sni: ${interceptOpt.sni}`)
+    if (interceptOpt.sni != null) {
       rOptions.servername = interceptOpt.sni
-      if (rOptions.agent && rOptions.agent.options.rejectUnauthorized && rOptions.agent.unVerifySslAgent) {
-        // rOptions.agent.options.rejectUnauthorized = false // 不能直接在agent上进行修改属性值，因为它采用了单例模式，所有请求共用这个对象的
-        rOptions.agent = rOptions.agent.unVerifySslAgent
-        unVerifySsl = true
-      }
-
-      const unVerifySslStr = unVerifySsl ? ', unVerifySsl' : ''
-      res.setHeader('DS-Interceptor', `proxy: ${proxyTarget}, sni: ${interceptOpt.sni}${unVerifySslStr}`)
-      log.info(`proxy intercept: hostname: ${originHostname}, target: ${proxyTarget}, sni replace servername: ${rOptions.servername}${unVerifySslStr}`)
-    } else if (interceptOpt.unVerifySsl === true) {
-      if (rOptions.agent && rOptions.agent.options.rejectUnauthorized && rOptions.agent.unVerifySslAgent) {
-        rOptions.agent = rOptions.agent.unVerifySslAgent
-        res.setHeader('DS-Interceptor', `proxy: ${proxyTarget}, unVerifySsl`)
-        log.info(`proxy intercept: hostname: ${originHostname}, target: ${proxyTarget}, unVerifySsl`)
-      } else {
-        res.setHeader('DS-Interceptor', `proxy: ${proxyTarget}, already unVerifySsl`)
-        log.info(`proxy intercept: hostname: ${originHostname}, target: ${proxyTarget}, already unVerifySsl`)
-      }
-    } else {
-      res.setHeader('DS-Interceptor', `proxy: ${proxyTarget}`)
-      log.info(`proxy intercept: hostname: ${originHostname}, target：${proxyTarget}`)
     }
+
+    // 证书校验策略只由显式配置决定：sni 只负责改 SNI，不再顺带关闭上游校验
+    let unVerifySslLabel = null
+    if (interceptOpt.unVerifySsl === true || interceptOpt.ssl === false) {
+      unVerifySslLabel = applyUnVerifySslAgent(rOptions) ? 'unVerifySsl' : 'already unVerifySsl'
+    }
+
+    const labels = joinLabels([`proxy: ${proxyTarget}`, sniLabel, verifyHostLabel, unVerifySslLabel])
+    res.setHeader('DS-Interceptor', labels)
+    log.info(`proxy intercept: hostname: ${originHostname}, ${labels}`)
 
     return true
   },
