@@ -699,7 +699,6 @@ Object.assign(defaultConfig.server, {
     'github.com': {
       '^(/[^/]+){2,}/?(\\?.*)?$': {
         sni: 'baidu.com',
-        unVerifySsl: true,
         tampermonkeyScript: 'https://ds-official-config.bestar.de5.net/tampermonkey.js',
         script: 'https://ds-official-config.bestar.de5.net/GithubEnhanced-High-Speed-Download.user.js',
         remark: '注：上面所使用的脚本地址，为高速镜像地址。',
@@ -708,13 +707,11 @@ Object.assign(defaultConfig.server, {
       '^(/[\\w-.]+){2,}/?(\\?.*)?$': null,
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.(jpg|jpeg|png|gif))(\\?.*)?$': {
         sni: 'baidu.com',
-        unVerifySsl: true,
         cacheDays: 365,
         desc: '仓库内图片重定向，缓存1年。',
       },
       '^((/[^/]+){2,})/raw((/[^/]+)+\\.js)(\\?.*)?$': {
         sni: 'baidu.com',
-        unVerifySsl: true,
         responseReplace: {
           headers: {
             'content-type': 'application/javascript; charset=utf-8',
@@ -724,13 +721,11 @@ Object.assign(defaultConfig.server, {
       },
       '.*': {
         sni: 'baidu.com',
-        unVerifySsl: true,
       },
     },
     'api.github.com': {
       '.*': {
         sni: 'baidu.com',
-        unVerifySsl: true,
       },
     },
     'github.githubassets.com': {
@@ -743,7 +738,6 @@ Object.assign(defaultConfig.server, {
       '^(/[^/]+)*/[^./]+\\.(svg|png|gif|jpg|jpeg|ico|js|css)(\\?.*)?$': {
         cacheDays: 365,
         sni: 'baidu.com',
-        unVerifySsl: true,
         desc: '图片、JS文件、CSS文件，缓存1年',
       },
     },
@@ -753,13 +747,11 @@ Object.assign(defaultConfig.server, {
       },
       '.*': {
         sni: 'baidu.com',
-        unVerifySsl: true,
       },
     },
     '*.githubusercontent.com': {
       '.*': {
         sni: 'baidu.com',
-        unVerifySsl: true,
         requestReplace: {
           headers: {
             'accept-language': 'en-US,en;q=0.8',
@@ -781,7 +773,6 @@ Object.assign(defaultConfig.server, {
     '*.github.io': {
       '.*': {
         sni: 'baidu.com',
-        unVerifySsl: true,
       },
     },
     '*.gravatar.com': {
@@ -944,7 +935,6 @@ Object.assign(defaultConfig.server, {
     'cn.vuejs.org': {
       '.*': {
         sni: 'vuejs.org',
-        unVerifySsl: true,
       },
     },
     '*z-library.sk': {
@@ -1017,7 +1007,6 @@ Object.assign(defaultConfig.server, {
     '^(store|checkout).steampowered.com$': {
       '.*': {
         sni: 'baidu.com',
-        unVerifySsl: true,
       },
     },
     'external-content.duckduckgo.com': {
@@ -1059,7 +1048,6 @@ Object.assign(defaultConfig.server, {
     '*.claude.ai': {
       '.*': {
         sni: 'claude.ai',
-        unVerifySsl: true,
       },
     },
     'jsd.proxy.aks.moe': {
