@@ -102,7 +102,11 @@ const serverApi = {
 
     // 插件可以把敏感数据（如系统密钥库里的令牌）以环境变量形式交给子进程，避免写进 running.json。
     // 必须在读取配置之前执行：插件的 prepareEnv 可能顺带把旧版明文配置迁移走。
-    await secretVault.migrate(config)
+    if (typeof secretVault.migrate === 'function') {
+      await secretVault.migrate(config)
+    } else {
+      log.warn('util.secret-vault 缺少 migrate（安装包文件可能不完整），跳过配置迁移')
+    }
     // CA 私钥只留在系统密钥库里：文件被删过就从密钥库取，并通过环境变量交给子进程，
     // 否则 initCA 会把它当成首次运行、静默换发新 CA
     const rootCaFile = config.get().server.setting.rootCaFile
@@ -120,7 +124,11 @@ const serverApi = {
       }
     }
     // 内建凭据（增强功能口令、P2P 令牌）走同一份快照
-    Object.assign(pluginEnv, await secretVault.prepareEnv())
+    if (typeof secretVault.prepareEnv === 'function') {
+      Object.assign(pluginEnv, await secretVault.prepareEnv())
+    } else {
+      log.warn('util.secret-vault 缺少 prepareEnv（安装包文件可能不完整），跳过环境变量注入')
+    }
     if (caPrep.keyPem) {
       pluginEnv[CA_KEY_ENV] = caPrep.keyPem
     }
