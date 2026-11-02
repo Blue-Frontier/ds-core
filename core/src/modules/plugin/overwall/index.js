@@ -1,5 +1,5 @@
 const pluginConfig = require('./config')
-const { vault, ACCOUNT_OVERWALL } = require('../../utils/util.secret-vault')
+const { vault, ACCOUNT_OVERWALL } = require('../../../utils/util.secret-vault')
 
 const Plugin = function (context) {
   const { config, shell, event, log } = context

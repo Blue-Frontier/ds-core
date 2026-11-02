@@ -2,7 +2,7 @@
  * L1 节点分享插件：TLS+CONNECT + 配额/卡密
  */
 const shareConfig = require('./config')
-const { vault, ACCOUNT_SHARE } = require('../../utils/util.secret-vault')
+const { vault, ACCOUNT_SHARE } = require('../../../utils/util.secret-vault')
 
 const SharePlugin = function (context) {
   const { config, event, log } = context
