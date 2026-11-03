@@ -570,6 +570,11 @@ function createEchAgentPair ({ dnsConfig, ech }) {
         stat,
         nativeAgent: baseAgent,
       })
+        // Register the wrapper before following the companion agents: the pair
+        // built by createHttpsAgent points back at the original (
+        // agent.unVerifySslAgent.verifySslAgent === agent), so registering later
+        // recurses forever and blows the stack.
+        wrappedAgents.set(baseAgent, agent)
       if (baseAgent.unVerifySslAgent != null) {
         agent.unVerifySslAgent = wrap(baseAgent.unVerifySslAgent)
       }
@@ -577,7 +582,6 @@ function createEchAgentPair ({ dnsConfig, ech }) {
         // 与 unVerifySslAgent 的反向引用保持一致（overwall 恢复校验策略时用）
         agent.verifySslAgent = wrap(baseAgent.verifySslAgent)
       }
-      wrappedAgents.set(baseAgent, agent)
     }
     return agent
   }
@@ -600,3 +604,4 @@ module.exports = {
   ECH_REJECT_TTL,
   ECH_FAILURE_TTL,
 }
+
