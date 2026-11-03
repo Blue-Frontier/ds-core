@@ -268,6 +268,9 @@ importers:
       dns-packet:
         specifier: ^4.2.0
         version: 4.2.0
+      is-browser:
+        specifier: ^2.1.0
+        version: 2.1.0
       json5:
         specifier: ^2.2.3
         version: 2.2.3
@@ -1833,6 +1836,9 @@ packages:
 
   is-arrayish@0.2.1:
     resolution: {integrity: sha512-zz06S8t0ozoDXMG+ube26zeCTNXcKIPJZJi8hBrF4idCLms4CG9QtK7qBl1boi5ODzFpjswb5JPmHCbMpjaYzg==}
+
+  is-browser@2.1.0:
+    resolution: {integrity: sha512-F5rTJxDQ2sW81fcfOR1GnCXT6sVJC104fCyfj+mjpwNEwaPYSn5fte5jiHmBg3DHsIoL/l8Kvw5VN5SsTRcRFQ==}
 
   is-builtin-module@3.2.1:
     resolution: {integrity: sha512-BSLE3HnV2syZ0FK0iMA/yUGplUeMmNz4AW5fnTunbCIqZi4vG3WjJT9FHMy5D69xmAYBHXQhJdALdpwVxV501A==}
@@ -4447,6 +4453,8 @@ snapshots:
   ip@1.1.9: {}
 
   is-arrayish@0.2.1: {}
+
+  is-browser@2.1.0: {}
 
   is-builtin-module@3.2.1:
     dependencies:
