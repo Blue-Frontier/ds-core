@@ -7,7 +7,9 @@ const event = require('../../event')
 const status = require('../../status')
 const jsonApi = require('@blue-frontier/mitmproxy/src/json')
 const log = require('../../utils/util.log.core')
-const secretVault = require('../../utils/util.secret-vault')
+const secretVaultModule = require('../../utils/util.secret-vault')
+// 兼容增量更新：安装目录里可能残留只导出实例的旧版 util.secret-vault.js
+const secretVault = secretVaultModule.vault || secretVaultModule
 const { prepareCa, CA_KEY_ENV } = require('../../utils/util.ca-store')
 const { writeFilePrivate } = require('../../utils/util.fs-private')
 const { buildRemoteConfigFetchRules } = require('../../config/remote-config-rule')
@@ -101,11 +103,17 @@ const serverApi = {
     }
 
     // 插件可以把敏感数据（如系统密钥库里的令牌）以环境变量形式交给子进程，避免写进 running.json。
-    // 必须在读取配置之前执行：插件的 prepareEnv 可能顺带把旧版明文配置迁移走。
+    // 必须在读取配置之前执行：迁移会把旧版明文口令/令牌从配置里挪走。
     if (typeof secretVault.migrate === 'function') {
-      await secretVault.migrate(config)
+      try {
+        if (await secretVault.migrate(config)) {
+          log.info('已把旧版明文口令/令牌迁入系统密钥库')
+        }
+      } catch (e) {
+        log.warn('迁移旧版明文口令/令牌失败，本次跳过:', e)
+      }
     } else {
-      log.warn('util.secret-vault 缺少 migrate（安装包文件可能不完整），跳过配置迁移')
+      log.warn('util.secret-vault 缺少 migrate（安装包文件不完整），跳过配置迁移')
     }
     // CA 私钥只留在系统密钥库里：文件被删过就从密钥库取，并通过环境变量交给子进程，
     // 否则 initCA 会把它当成首次运行、静默换发新 CA
@@ -125,9 +133,13 @@ const serverApi = {
     }
     // 内建凭据（增强功能口令、P2P 令牌）走同一份快照
     if (typeof secretVault.prepareEnv === 'function') {
-      Object.assign(pluginEnv, await secretVault.prepareEnv())
+      try {
+        Object.assign(pluginEnv, (await secretVault.prepareEnv()) || {})
+      } catch (e) {
+        log.warn('读取系统密钥库失败，本次不注入口令/令牌快照:', e)
+      }
     } else {
-      log.warn('util.secret-vault 缺少 prepareEnv（安装包文件可能不完整），跳过环境变量注入')
+      log.warn('util.secret-vault 缺少 prepareEnv（安装包文件不完整），跳过环境变量注入')
     }
     if (caPrep.keyPem) {
       pluginEnv[CA_KEY_ENV] = caPrep.keyPem

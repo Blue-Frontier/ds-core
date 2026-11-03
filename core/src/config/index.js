@@ -170,7 +170,7 @@ const defaultConfig = {
 // >>> SYNC:OFFICIAL-FALLBACK:BEGIN
 // 「internal 底本」：官方配置的规则类节点，由 _script/sync-official-config.mjs 在构建时自动更新，请勿手改。
 // 来源地址：https://ds-official-config.bestar.de5.net/remote_config.json5
-// 来源版本：202611020721（修复 X（Twitter）ECH 规则的反斜杠被 JSON5 转义吞掉，导致 www.okx.com 等域名被误判为 ECH 域名）
+// 来源版本：202611021413（新增 Grok（grok.com / x.ai）的 ECH 规则；grok.ai 不兼容 ECH，保持普通连接）
 // 下载失败时脚本不会改动本区块，即保留上一次的同步结果。
 // 用 Object.assign 整体替换（不是深合并），这样官方「删掉」的键也会跟着消失。
 /* eslint-disable no-template-curly-in-string -- 官方配置里存在 ${...} 形式的普通字符串（如代理目标），并非模板串 */
@@ -1590,6 +1590,8 @@ Object.assign(defaultConfig.server, {
         'civitai.com',
         '*linux.do',
         'greasyfork.org',
+        '*grok.com',
+        '*x.ai',
       ],
       preSetIpDomains: [
         '*ldstatic.com',
@@ -1621,8 +1623,8 @@ Object.assign(defaultConfig.server, {
   },
 })
 Object.assign(defaultConfig.app.metaInfo, {
-  version: 202611020721,
-  updateLog: '修复 X（Twitter）ECH 规则的反斜杠被 JSON5 转义吞掉，导致 www.okx.com 等域名被误判为 ECH 域名',
+  version: 202611021413,
+  updateLog: '新增 Grok（grok.com / x.ai）的 ECH 规则；grok.ai 不兼容 ECH，保持普通连接',
 })
 /* eslint-enable no-template-curly-in-string */
 // <<< SYNC:OFFICIAL-FALLBACK:END

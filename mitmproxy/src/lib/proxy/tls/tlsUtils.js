@@ -6,6 +6,7 @@ const _ = require('lodash')
 const forge = require('node-forge')
 const log = require('../../../utils/util.log.server')
 const config = require('../common/config')
+const { createCA } = require('./ca-cert')
 
 const utils = exports
 const pki = forge.pki
@@ -33,55 +34,7 @@ async function generateForgeRsaKeyPair () {
 //   log.info('get userinfo error', e)
 // }
 
-utils.createCA = function (CN) {
-  const keys = pki.rsa.generateKeyPair(2048)
-  const cert = pki.createCertificate()
-  cert.publicKey = keys.publicKey
-  cert.serialNumber = `${Date.now()}`
-  cert.validity.notBefore = new Date(Date.now() - (60 * 60 * 1000))
-  cert.validity.notAfter = new Date()
-  cert.validity.notAfter.setFullYear(cert.validity.notAfter.getFullYear() + 20)
-  const attrs = [{
-    name: 'commonName',
-    value: CN,
-  }, {
-    name: 'countryName',
-    value: 'CN',
-  }, {
-    shortName: 'ST',
-    value: 'GuangDong',
-  }, {
-    name: 'localityName',
-    value: 'ShenZhen',
-  }, {
-    name: 'organizationName',
-    value: 'dev-sidecar',
-  }, {
-    shortName: 'OU',
-    value: 'https://github.com/docmirror/dev-sidecar',
-  }]
-  cert.setSubject(attrs)
-  cert.setIssuer(attrs)
-  cert.setExtensions([{
-    name: 'basicConstraints',
-    critical: true,
-    cA: true,
-  }, {
-    name: 'keyUsage',
-    critical: true,
-    keyCertSign: true,
-  }, {
-    name: 'subjectKeyIdentifier',
-  }])
-
-  // self-sign certificate
-  cert.sign(keys.privateKey, forge.md.sha256.create())
-
-  return {
-    key: keys.privateKey,
-    cert,
-  }
-}
+utils.createCA = createCA
 
 /**
  * 构造完整的 authorityKeyIdentifier（含签发者 SKI）。

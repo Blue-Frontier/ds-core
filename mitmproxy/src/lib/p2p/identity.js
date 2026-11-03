@@ -7,6 +7,7 @@ const path = require('node:path')
 const os = require('node:os')
 const crypto = require('node:crypto')
 const secretStore = require('@blue-frontier/dev-sidecar/src/utils/util.secret-store')
+const log = require('../../utils/util.log.server')
 
 const SECRET_ACCOUNT = 'p2p-identity-private-key'
 
@@ -85,6 +86,7 @@ function ensurePrivateKeyStored (record) {
           // ignore
         }
       }
+      reconcilePublicKey(record, record.privateKey)
       return record.privateKey
     }
     let stored = await secretStore.getSecret(SECRET_ACCOUNT)
@@ -100,8 +102,46 @@ function ensurePrivateKeyStored (record) {
       fs.writeFileSync(identityPath(), `${JSON.stringify(stripPrivate(record), null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
     }
     record.privateKey = stored
+    reconcilePublicKey(record, stored)
     return stored
   })()
+}
+
+/**
+ * 密钥库里的私钥才是可用的那一半：如果它和 identity.json 里的公钥对不上，
+ * 按私钥重建公钥与 nodeId（私钥无法从公钥反推）。
+ *
+ * 这种不一致常见于 SecretStore 后端切换（keytar ↔ 口令加密文件）后两边各存了一把键：
+ * 用密钥库私钥签名、却把文件里的公钥写进卡密，验签必然 bad signature，
+ * 而且每个用到身份的地方都会跟着错。发现即修复，并写回身份文件。
+ */
+function reconcilePublicKey (record, privateKeyB64) {
+  let pubDer
+  try {
+    pubDer = crypto.createPublicKey(crypto.createPrivateKey({
+      key: Buffer.from(privateKeyB64, 'base64'),
+      format: 'der',
+      type: 'pkcs8',
+    })).export({ type: 'spki', format: 'der' })
+  } catch (e) {
+    log.warn('节点私钥无法解析，跳过公钥一致性修复:', e.message)
+    return record
+  }
+  const nodeId = nodeIdFromPublicKey(pubDer)
+  const publicKey = pubDer.toString('base64')
+  if (record.publicKey === publicKey && record.nodeId === nodeId) {
+    return record
+  }
+  log.warn('节点身份的公钥与系统密钥库里的私钥不一致，已按私钥重建公钥与 nodeId')
+  record.publicKey = publicKey
+  record.nodeId = nodeId
+  record.privateKeyStored = true
+  try {
+    fs.writeFileSync(identityPath(), `${JSON.stringify(stripPrivate(record), null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  } catch (e) {
+    log.warn('写回节点身份文件失败:', e)
+  }
+  return record
 }
 
 let cached = null

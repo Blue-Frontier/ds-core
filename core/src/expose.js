@@ -6,6 +6,7 @@ const shell = require('./shell')
 const status = require('./status')
 const instance = require('./modules/instance')
 const log = require('./utils/util.log.core')
+const caStore = require('./utils/util.ca-store')
 
 const context = {
   config,
@@ -174,6 +175,24 @@ const api = {
   plugin,
   instance,
   log,
+  ca: {
+    /**
+     * 保证根证书文件存在：界面「安装证书」在代理启动之前调用，
+     * 不用为了拿到证书先去开一次代理服务。
+     * 失败时返回 { ok: false, error }，不抛 IPC 异常，界面可以直接显示原因。
+     * @returns {Promise<{ ok: boolean, created?: boolean, restored?: boolean, certPath?: string, keyPath?: string, error?: string }>} ok 为 false 时 error 是可直接展示给用户的原因
+     */
+    async ensureRootCa () {
+      try {
+        const rootCaFile = config.get().server.setting.rootCaFile
+        const ret = await caStore.ensureCaFiles({ certPath: rootCaFile.certPath, keyPath: rootCaFile.keyPath })
+        return { ok: true, ...ret }
+      } catch (e) {
+        log.warn('准备根证书失败:', e)
+        return { ok: false, error: (e && e.message) || String(e) }
+      }
+    },
+  },
 }
 module.exports = {
   status,
